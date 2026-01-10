@@ -60,13 +60,10 @@ class PriceFormatter {
     
     func format(_ price: Double) -> String {
         if price >= 1 {
-            // Normal prices: $90,719.00, $3,097.70, $136.42
             return currencyFormatter.string(from: NSNumber(value: price)) ?? "$0.00"
         } else if price >= 0.0001 {
-            // Small prices: $0.0012
             return smallPriceFormatter.string(from: NSNumber(value: price)) ?? "$0.0000"
         } else {
-            // Very small prices: scientific notation or more decimals
             return String(format: "$%.8f", price)
         }
     }
@@ -159,6 +156,293 @@ class CryptoAPI {
         group.notify(queue: .main) {
             completion(results)
         }
+    }
+    
+    // Fetch klines (candlestick) data for chart
+    func fetchKlines(for symbol: String, days: Int = 7, completion: @escaping ([Double]) -> Void) {
+        let pair = "\(symbol.uppercased())-USDT"
+        let endTime = Int(Date().timeIntervalSince1970)
+        let startTime = endTime - (days * 24 * 60 * 60)
+        
+        // Use 4hour candles for 7 days = ~42 data points
+        let urlString = "\(baseURL)/api/v1/market/candles?type=4hour&symbol=\(pair)&startAt=\(startTime)&endAt=\(endTime)"
+        
+        guard let url = URL(string: urlString) else {
+            completion([])
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("CryptoFloat/1.0", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                print("Klines error: \(error.localizedDescription)")
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+            
+            guard let data = data else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+            
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let code = json["code"] as? String,
+                   code == "200000",
+                   let candles = json["data"] as? [[String]] {
+                    
+                    // Extract closing prices (index 2), data comes newest first
+                    let closingPrices = candles.reversed().compactMap { Double($0[2]) }
+                    
+                    DispatchQueue.main.async {
+                        completion(closingPrices)
+                    }
+                } else {
+                    DispatchQueue.main.async { completion([]) }
+                }
+            } catch {
+                print("Klines parse error: \(error)")
+                DispatchQueue.main.async { completion([]) }
+            }
+        }.resume()
+    }
+}
+
+// MARK: - Line Chart View
+class LineChartView: NSView {
+    var dataPoints: [Double] = []
+    var isPositive: Bool = true
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        
+        guard dataPoints.count > 1 else {
+            drawNoData()
+            return
+        }
+        
+        let padding: CGFloat = 20
+        let chartWidth = bounds.width - (padding * 2)
+        let chartHeight = bounds.height - (padding * 2)
+        
+        guard let minVal = dataPoints.min(), let maxVal = dataPoints.max(), maxVal > minVal else {
+            drawNoData()
+            return
+        }
+        
+        let range = maxVal - minVal
+        
+        // Determine color based on trend
+        let lineColor: NSColor
+        let gradientStartColor: NSColor
+        if dataPoints.last! >= dataPoints.first! {
+            lineColor = NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 1)
+            gradientStartColor = NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 0.3)
+        } else {
+            lineColor = NSColor(calibratedRed: 1, green: 0.4, blue: 0.4, alpha: 1)
+            gradientStartColor = NSColor(calibratedRed: 1, green: 0.4, blue: 0.4, alpha: 0.3)
+        }
+        
+        // Create path for line
+        let linePath = NSBezierPath()
+        let fillPath = NSBezierPath()
+        
+        for (index, value) in dataPoints.enumerated() {
+            let x = padding + (CGFloat(index) / CGFloat(dataPoints.count - 1)) * chartWidth
+            let y = padding + ((value - minVal) / range) * chartHeight
+            
+            if index == 0 {
+                linePath.move(to: NSPoint(x: x, y: y))
+                fillPath.move(to: NSPoint(x: x, y: padding))
+                fillPath.line(to: NSPoint(x: x, y: y))
+            } else {
+                linePath.line(to: NSPoint(x: x, y: y))
+                fillPath.line(to: NSPoint(x: x, y: y))
+            }
+        }
+        
+        // Complete fill path
+        let lastX = padding + chartWidth
+        fillPath.line(to: NSPoint(x: lastX, y: padding))
+        fillPath.close()
+        
+        // Draw gradient fill
+        gradientStartColor.setFill()
+        fillPath.fill()
+        
+        // Draw line
+        lineColor.setStroke()
+        linePath.lineWidth = 2
+        linePath.lineCapStyle = .round
+        linePath.lineJoinStyle = .round
+        linePath.stroke()
+        
+        // Draw dots at start and end
+        let dotRadius: CGFloat = 4
+        lineColor.setFill()
+        
+        // Start dot
+        let startY = padding + ((dataPoints.first! - minVal) / range) * chartHeight
+        let startDot = NSBezierPath(ovalIn: NSRect(x: padding - dotRadius, y: startY - dotRadius, width: dotRadius * 2, height: dotRadius * 2))
+        startDot.fill()
+        
+        // End dot
+        let endY = padding + ((dataPoints.last! - minVal) / range) * chartHeight
+        let endDot = NSBezierPath(ovalIn: NSRect(x: lastX - dotRadius, y: endY - dotRadius, width: dotRadius * 2, height: dotRadius * 2))
+        endDot.fill()
+        
+        // Draw price labels
+        drawPriceLabels(minVal: minVal, maxVal: maxVal, padding: padding, chartHeight: chartHeight)
+    }
+    
+    private func drawPriceLabels(minVal: Double, maxVal: Double, padding: CGFloat, chartHeight: CGFloat) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+            .foregroundColor: NSColor(white: 1, alpha: 0.6)
+        ]
+        
+        // Max price (top)
+        let maxStr = PriceFormatter.shared.format(maxVal)
+        maxStr.draw(at: NSPoint(x: 4, y: padding + chartHeight - 12), withAttributes: attributes)
+        
+        // Min price (bottom)
+        let minStr = PriceFormatter.shared.format(minVal)
+        minStr.draw(at: NSPoint(x: 4, y: padding), withAttributes: attributes)
+    }
+    
+    private func drawNoData() {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: NSColor(white: 1, alpha: 0.5)
+        ]
+        let text = "Loading chart..."
+        let size = text.size(withAttributes: attributes)
+        let point = NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
+        text.draw(at: point, withAttributes: attributes)
+    }
+}
+
+// MARK: - Chart Window
+class ChartWindow: NSWindow {
+    override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
+        
+        level = .floating
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        isMovableByWindowBackground = true
+    }
+    
+    override var canBecomeKey: Bool { true }
+}
+
+// MARK: - Chart Panel View
+class ChartPanelView: NSVisualEffectView {
+    var symbol: String = ""
+    var currentPrice: Double = 0
+    var change24h: Double = 0
+    var chartView: LineChartView!
+    var onClose: (() -> Void)?
+    
+    private var trackingArea: NSTrackingArea?
+    
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setup()
+    }
+    
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+    
+    private func setup() {
+        blendingMode = .behindWindow
+        material = .hudWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 16
+        layer?.masksToBounds = true
+        
+        // Setup tracking area for click
+        trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea!)
+    }
+    
+    func configure(symbol: String, price: Double, change: Double) {
+        self.symbol = symbol
+        self.currentPrice = price
+        self.change24h = change
+        
+        // Clear subviews
+        subviews.forEach { $0.removeFromSuperview() }
+        
+        // Header with symbol
+        let headerLabel = NSTextField(labelWithString: "\(symbol)/USDT - 7 Day Chart")
+        headerLabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        headerLabel.textColor = .white
+        headerLabel.frame = NSRect(x: 15, y: bounds.height - 30, width: bounds.width - 30, height: 20)
+        addSubview(headerLabel)
+        
+        // Current price
+        let priceLabel = NSTextField(labelWithString: PriceFormatter.shared.format(price))
+        priceLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 18, weight: .semibold)
+        priceLabel.textColor = .white
+        priceLabel.frame = NSRect(x: 15, y: bounds.height - 55, width: 150, height: 24)
+        addSubview(priceLabel)
+        
+        // Change percentage
+        let changeLabel = NSTextField(labelWithString: String(format: "%@%.2f%%", change >= 0 ? "+" : "", change))
+        changeLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 14, weight: .medium)
+        changeLabel.textColor = change >= 0 ?
+            NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 1) :
+            NSColor(calibratedRed: 1, green: 0.4, blue: 0.4, alpha: 1)
+        changeLabel.frame = NSRect(x: 165, y: bounds.height - 53, width: 80, height: 20)
+        addSubview(changeLabel)
+        
+        // Close hint
+        let closeHint = NSTextField(labelWithString: "Click to close")
+        closeHint.font = NSFont.systemFont(ofSize: 9, weight: .light)
+        closeHint.textColor = NSColor(white: 1, alpha: 0.4)
+        closeHint.alignment = .right
+        closeHint.frame = NSRect(x: bounds.width - 85, y: bounds.height - 28, width: 70, height: 14)
+        addSubview(closeHint)
+        
+        // Chart view
+        chartView = LineChartView(frame: NSRect(x: 10, y: 10, width: bounds.width - 20, height: bounds.height - 75))
+        chartView.wantsLayer = true
+        addSubview(chartView)
+        
+        // Fetch chart data
+        CryptoAPI.shared.fetchKlines(for: symbol) { [weak self] prices in
+            self?.chartView.dataPoints = prices
+            self?.chartView.needsDisplay = true
+        }
+    }
+    
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 16, yRadius: 16)
+        NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.12, alpha: 0.85).setFill()
+        path.fill()
+        
+        NSColor(calibratedRed: 0.4, green: 0.5, blue: 0.7, alpha: 0.3).setStroke()
+        path.lineWidth = 1.5
+        path.stroke()
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        onClose?()
     }
 }
 
@@ -366,6 +650,7 @@ class AnimatedPriceLabel: NSTextField {
 // MARK: - Crypto Row View
 class CryptoRowView: NSView {
     let symbol: String
+    var onTap: ((String, Double, Double) -> Void)?
     
     private let symbolLabel = NSTextField(labelWithString: "")
     private let priceLabel = AnimatedPriceLabel(labelWithString: "Loading...")
@@ -373,7 +658,10 @@ class CryptoRowView: NSView {
     private let arrowLabel = NSTextField(labelWithString: "")
     
     private var lastPrice: Double = 0
+    private var currentChange: Double = 0
     private var isFirstUpdate = true
+    private var isHovered = false
+    private var trackingArea: NSTrackingArea?
     
     init(frame: NSRect, symbol: String) {
         self.symbol = symbol
@@ -387,6 +675,15 @@ class CryptoRowView: NSView {
     
     private func setup() {
         wantsLayer = true
+        
+        // Setup tracking area for hover and click
+        trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea!)
         
         // Symbol label
         symbolLabel.stringValue = symbol
@@ -408,7 +705,7 @@ class CryptoRowView: NSView {
         arrowLabel.wantsLayer = true
         addSubview(arrowLabel)
         
-        // Price label - left aligned so prices start at same position
+        // Price label
         priceLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         priceLabel.textColor = .white
         priceLabel.alignment = .left
@@ -437,18 +734,15 @@ class CryptoRowView: NSView {
             return
         }
         
-        // Determine if price went up or down
         let priceWentUp = price > lastPrice
         let priceWentDown = price < lastPrice
         let priceChanged = price != lastPrice && !isFirstUpdate
         
-        // Format price using the proper formatter
         let priceStr = PriceFormatter.shared.format(price)
         
         priceLabel.stringValue = priceStr
         priceLabel.textColor = .white
         
-        // Update arrow and animate if price changed
         if priceChanged {
             if priceWentUp {
                 arrowLabel.stringValue = "▲"
@@ -469,7 +763,6 @@ class CryptoRowView: NSView {
             }
         }
         
-        // Format 24h change
         if change >= 0 {
             changeLabel.stringValue = String(format: "+%.2f%%", change)
             changeLabel.textColor = NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 1)
@@ -479,6 +772,7 @@ class CryptoRowView: NSView {
         }
         
         lastPrice = price
+        currentChange = change
         isFirstUpdate = false
     }
     
@@ -495,12 +789,39 @@ class CryptoRowView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         
+        // Hover highlight
+        if isHovered {
+            let hoverPath = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 2), xRadius: 6, yRadius: 6)
+            NSColor(calibratedRed: 1, green: 1, blue: 1, alpha: 0.1).setFill()
+            hoverPath.fill()
+        }
+        
+        // Separator line
         let path = NSBezierPath()
         path.move(to: NSPoint(x: 10, y: 0))
         path.line(to: NSPoint(x: bounds.width - 10, y: 0))
         NSColor(calibratedRed: 1, green: 1, blue: 1, alpha: 0.1).setStroke()
         path.lineWidth = 0.5
         path.stroke()
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        NSCursor.pointingHand.set()
+        needsDisplay = true
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        NSCursor.arrow.set()
+        needsDisplay = true
+    }
+    
+    override func mouseUp(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        if bounds.contains(location) {
+            onTap?(symbol, lastPrice, currentChange)
+        }
     }
 }
 
@@ -531,16 +852,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var contentPanel: GlassContentView?
     var containerView: NSView!
     
+    // Chart window
+    var chartWindow: ChartWindow?
+    var chartPanel: ChartPanelView?
+    var currentChartSymbol: String?
+    
     var transparencyMenu: NSMenu!
     var refreshRateMenu: NSMenu!
     var removeMenu: NSMenu!
     var expandCollapseItem: NSMenuItem!
     
     let toggleButtonSize: CGFloat = 44
-    let panelWidth: CGFloat = 200  // Slightly wider to fit formatted prices
+    let panelWidth: CGFloat = 200
     let rowHeight: CGFloat = 40
     let headerHeight: CGFloat = 35
     let padding: CGFloat = 15
+    
+    let chartWidth: CGFloat = 280
+    let chartHeight: CGFloat = 180
     
     let refreshRates: [(label: String, seconds: Int)] = [
         ("5 seconds", 5),
@@ -571,6 +900,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.windowX = Double(frame.origin.x)
         config.windowY = Double(frame.origin.y)
         config.save()
+    }
+    
+    // MARK: - Chart
+    func showChart(for symbol: String, price: Double, change: Double) {
+        // If clicking same symbol, close chart
+        if currentChartSymbol == symbol && chartWindow?.isVisible == true {
+            closeChart()
+            return
+        }
+        
+        currentChartSymbol = symbol
+        
+        // Position chart window near the main window
+        let mainFrame = floatingWindow.frame
+        let chartX = mainFrame.origin.x + mainFrame.width + 10
+        let chartY = mainFrame.origin.y + mainFrame.height - chartHeight
+        
+        let chartFrame = NSRect(x: chartX, y: chartY, width: chartWidth, height: chartHeight)
+        
+        if chartWindow == nil {
+            chartWindow = ChartWindow(contentRect: chartFrame, styleMask: [], backing: .buffered, defer: false)
+            chartWindow?.alphaValue = CGFloat(config.transparency)
+        } else {
+            chartWindow?.setFrame(chartFrame, display: true)
+        }
+        
+        // Create chart panel
+        chartPanel = ChartPanelView(frame: NSRect(x: 0, y: 0, width: chartWidth, height: chartHeight))
+        chartPanel?.configure(symbol: symbol, price: price, change: change)
+        chartPanel?.onClose = { [weak self] in
+            self?.closeChart()
+        }
+        
+        chartWindow?.contentView = chartPanel
+        chartWindow?.makeKeyAndOrderFront(nil)
+        
+        // Animate in
+        chartWindow?.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            chartWindow?.animator().alphaValue = CGFloat(config.transparency)
+        }
+    }
+    
+    func closeChart() {
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            chartWindow?.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            self?.chartWindow?.orderOut(nil)
+            self?.currentChartSymbol = nil
+        })
     }
     
     // MARK: - Setup
@@ -717,6 +1098,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 frame: NSRect(x: 0, y: yPos, width: panelWidth, height: rowHeight),
                 symbol: symbol
             )
+            row.onTap = { [weak self] sym, price, change in
+                self?.showChart(for: sym, price: price, change: change)
+            }
             contentPanel?.addSubview(row)
             cryptoRows[symbol] = row
         }
@@ -748,6 +1132,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             contentPanel?.removeFromSuperview()
             contentPanel = nil
+            closeChart()
         }
     }
     
@@ -796,6 +1181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleWindowVisibility() {
         if floatingWindow.isVisible {
             floatingWindow.orderOut(nil)
+            closeChart()
         } else {
             floatingWindow.makeKeyAndOrderFront(nil)
         }
@@ -808,6 +1194,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func setTransparency(_ sender: NSMenuItem) {
         let level = Double(sender.tag) / 100.0
         floatingWindow.alphaValue = CGFloat(level)
+        chartWindow?.alphaValue = CGFloat(level)
         config.transparency = level
         config.save()
         
@@ -855,6 +1242,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.save()
         updateRemoveMenu()
         rebuildWindow()
+        
+        if currentChartSymbol == symbol {
+            closeChart()
+        }
     }
     
     @objc func resetDefaults() {
@@ -864,6 +1255,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateRemoveMenu()
         rebuildWindow()
         restartUpdateTimer()
+        closeChart()
         
         for item in refreshRateMenu.items {
             item.state = item.tag == config.refreshRate ? .on : .off
