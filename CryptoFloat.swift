@@ -328,20 +328,24 @@ class LineChartView: NSView {
 // MARK: - Chart Window
 class ChartWindow: NSWindow {
     override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
-        super.init(contentRect: contentRect, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
+        super.init(contentRect: contentRect, styleMask: [.borderless], backing: .buffered, defer: false)
         
         level = .floating
         isOpaque = false
-        backgroundColor = .clear
+        backgroundColor = NSColor.clear
         hasShadow = true
         isMovableByWindowBackground = true
+        
+        // Ensure the content view also has no background
+        contentView?.wantsLayer = true
+        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
     }
     
     override var canBecomeKey: Bool { true }
 }
 
 // MARK: - Chart Panel View
-class ChartPanelView: NSVisualEffectView {
+class ChartPanelView: NSView {
     var symbol: String = ""
     var currentPrice: Double = 0
     var change24h: Double = 0
@@ -361,12 +365,10 @@ class ChartPanelView: NSVisualEffectView {
     }
     
     private func setup() {
-        blendingMode = .behindWindow
-        material = .hudWindow
-        state = .active
         wantsLayer = true
         layer?.cornerRadius = 16
         layer?.masksToBounds = true
+        layer?.backgroundColor = NSColor.clear.cgColor
         
         // Setup tracking area for click
         trackingArea = NSTrackingArea(
@@ -430,12 +432,14 @@ class ChartPanelView: NSVisualEffectView {
     }
     
     override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        
+        // Draw rounded rectangle background
         let path = NSBezierPath(roundedRect: bounds, xRadius: 16, yRadius: 16)
-        NSColor(calibratedRed: 0.08, green: 0.08, blue: 0.12, alpha: 0.85).setFill()
+        path.addClip()
+        
+        NSColor(calibratedRed: 0.12, green: 0.12, blue: 0.15, alpha: 0.95).setFill()
         path.fill()
         
+        // Border
         NSColor(calibratedRed: 0.4, green: 0.5, blue: 0.7, alpha: 0.3).setStroke()
         path.lineWidth = 1.5
         path.stroke()
