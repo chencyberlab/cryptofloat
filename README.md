@@ -1,6 +1,8 @@
 # CryptoFloat (Swift Version)
 
 A native macOS menu bar app for tracking cryptocurrency prices with a floating, collapsible window.
+<img width="1318" height="662" alt="CleanShot 2026-02-13 at 09 44 41@2x" src="https://github.com/user-attachments/assets/a56095d0-de24-4570-a9b8-db548b1bb353" />
+
 
 ## Features
 
