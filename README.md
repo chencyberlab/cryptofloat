@@ -6,15 +6,24 @@ A native macOS menu bar app for tracking cryptocurrency prices with a floating, 
 
 ## Features
 
-- **Native Swift** - No Python dependencies, runs natively on macOS
-- **Collapsible Toggle Button** - Click the ₿ button to expand/collapse
-- **Floating Window** - Always-on-top with liquid glass styling
-- **Menu Bar Controls** - All settings accessible from menu bar
-- **Adjustable Transparency** - 50% to 100% opacity
-- **Real-time Updates** - Prices refresh every 60 seconds
-- **24h Change** - Color-coded price changes (green/red)
-- **Draggable** - Position window anywhere on screen
-- **Persistent Settings** - Remembers your preferences
+- **Native Swift** – No Python dependencies, runs natively on macOS
+- **Collapsible Toggle Button** – Click the ₿ button to expand/collapse, with a hover glow and an accent ring that turns green/red with the market
+- **Floating Window** – Always-on-top with liquid-glass styling
+- **Sparklines** – A 24h mini trend line on each row (toggleable)
+- **Menu-Bar Price Ticker** – Optionally show any tracked coin's live price right in the menu bar
+- **Hover Highlights** – Rows light up as you mouse over them
+- **Resilient** – Keeps the last known price (dimmed) during a network blip instead of blanking to "Error", and shows a live "updated / reconnecting…" status
+- **Menu Bar Controls** – All settings accessible from the menu bar
+- **Adjustable Transparency** – 50% to 100% opacity
+- **Adjustable Refresh Rate** – 5 seconds to 5 minutes (default 30s)
+- **24h Change** – Color-coded price changes (green/red) with up/down tick animations
+- **Draggable** – Position the window anywhere on screen
+- **Persistent Settings** – Remembers your preferences (and tolerates older/partial config files)
+
+## Data Source
+
+Prices come from the **public KuCoin API** (`api.kucoin.com`). Each coin is tracked
+as a `SYMBOL-USDT` trading pair, and sparklines use hourly candles.
 
 ## Requirements
 
@@ -62,36 +71,40 @@ cp -r CryptoFloat.app /Applications/
 
 ### Toggle Button
 - **Click the ₿ button** to expand/collapse the price panel
-- **Drag** anywhere on the window to reposition
+- **Drag** anywhere on the window background to reposition
+- The ring around the button is tinted by the primary coin's 24h direction (green = up, red = down)
 
 ### Menu Bar (₿ icon)
 | Menu Item | Description |
 |-----------|-------------|
 | Show/Hide Window | Toggle window visibility |
 | Expand/Collapse Prices | Same as clicking the button |
-| Transparency | Adjust window opacity |
-| Add Cryptocurrency... | Add by CoinGecko ID |
-| Remove Cryptocurrency | Remove tracked crypto |
+| Transparency | Adjust window opacity (50%–100%) |
+| Refresh Rate | How often prices update (5s–5min) |
+| Show Sparklines | Toggle the 24h mini charts |
+| Menu Bar Display | Show a coin's price in the menu bar, or just the ₿ icon |
+| Add Cryptocurrency… | Add by trading symbol (paired with USDT) |
+| Remove Cryptocurrency | Remove a tracked coin |
 | Reset to Defaults | Restore BTC, ETH, SOL |
-| Refresh Now | Force price refresh |
-| Quit CryptoFloat | Exit the app |
+| Refresh Now | Force a price refresh (⌘R) |
+| Quit CryptoFloat | Exit the app (⌘Q) |
 
 ### Adding Cryptocurrencies
 
-1. Click ₿ in menu bar
-2. Select "Add Cryptocurrency..."
-3. Enter the CoinGecko ID
+1. Click ₿ in the menu bar
+2. Select "Add Cryptocurrency…"
+3. Enter the **trading symbol** (it is automatically paired with USDT)
 
-**Common IDs:**
-- `bitcoin` - BTC
-- `ethereum` - ETH
-- `solana` - SOL
-- `cardano` - ADA
-- `dogecoin` - DOGE
-- `ripple` - XRP
-- `polkadot` - DOT
+**Common symbols:**
+- `BTC` – Bitcoin
+- `ETH` – Ethereum
+- `SOL` – Solana
+- `ADA` – Cardano
+- `DOGE` – Dogecoin
+- `XRP` – Ripple
+- `DOT` – Polkadot
 
-Find more at [coingecko.com](https://coingecko.com) - the ID is in the URL.
+Any symbol that KuCoin lists against USDT will work (e.g. `AVAX`, `LINK`, `MATIC`).
 
 ## Configuration
 
@@ -99,13 +112,19 @@ Settings are stored in: `~/.cryptofloat_config.json`
 
 ```json
 {
-  "cryptos": ["bitcoin", "ethereum", "solana"],
+  "cryptos": ["BTC", "ETH", "SOL"],
   "transparency": 0.85,
   "windowX": 100,
   "windowY": 100,
-  "isExpanded": true
+  "isExpanded": true,
+  "refreshRate": 30,
+  "showSparklines": true,
+  "menuBarSymbol": null
 }
 ```
+
+The config loader is tolerant: if a key is missing or a new version adds fields,
+your existing settings are preserved and only the missing values fall back to defaults.
 
 ## Troubleshooting
 
@@ -123,12 +142,12 @@ Make sure Xcode Command Line Tools are installed:
 xcode-select --install
 ```
 
-### Prices show "Error"
+### Prices show "—" or "reconnecting…"
 
 - Check your internet connection
-- CoinGecko API might be temporarily unavailable
-- Click "Refresh Now" to retry
+- The KuCoin API might be temporarily unavailable, or the symbol may not be listed against USDT
+- Click "Refresh Now" to retry (the last known price stays visible, dimmed, during outages)
 
 ## License
 
-MIT License - Feel free to modify and distribute.
+MIT License – Feel free to modify and distribute.
