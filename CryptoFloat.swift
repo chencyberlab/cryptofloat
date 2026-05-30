@@ -2,6 +2,11 @@ import Cocoa
 import Foundation
 
 // MARK: - Configuration
+enum FloatingWidgetMode: String, Codable {
+    case bitcoin
+    case marquee
+}
+
 struct AppConfig: Codable {
     var cryptos: [String]
     var transparency: Double
@@ -11,6 +16,7 @@ struct AppConfig: Codable {
     var refreshRate: Int
     var showSparklines: Bool
     var menuBarSymbol: String?
+    var floatingWidgetMode: FloatingWidgetMode
 
     static let `default` = AppConfig(
         cryptos: ["BTC", "ETH", "SOL"],
@@ -20,7 +26,8 @@ struct AppConfig: Codable {
         isExpanded: true,
         refreshRate: 30,
         showSparklines: true,
-        menuBarSymbol: nil
+        menuBarSymbol: nil,
+        floatingWidgetMode: .bitcoin
     )
 
     static let configPath = FileManager.default.homeDirectoryForCurrentUser
@@ -47,7 +54,7 @@ struct AppConfig: Codable {
 // config files (and future schema changes) working seamlessly.
 extension AppConfig {
     enum CodingKeys: String, CodingKey {
-        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol
+        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode
     }
 
     init(from decoder: Decoder) throws {
@@ -61,6 +68,7 @@ extension AppConfig {
         refreshRate    = (try? c.decode(Int.self,      forKey: .refreshRate)) ?? d.refreshRate
         showSparklines = (try? c.decode(Bool.self,     forKey: .showSparklines)) ?? d.showSparklines
         menuBarSymbol  = try? c.decode(String.self,    forKey: .menuBarSymbol)
+        floatingWidgetMode = (try? c.decode(FloatingWidgetMode.self, forKey: .floatingWidgetMode)) ?? d.floatingWidgetMode
     }
 }
 
@@ -310,6 +318,9 @@ class ToggleButtonView: NSView {
     var isHovered = false
     var isExpanded = true
     var onClick: (() -> Void)?
+    var backgroundOpacity: CGFloat = 0.85 {
+        didSet { needsDisplay = true }
+    }
 
     /// 24h change of the primary coin; tints the ring green/red as an ambient signal.
     var accentChange: Double = 0 {
@@ -360,7 +371,7 @@ class ToggleButtonView: NSView {
         // Soft outer glow on hover
         if isHovered {
             let glow = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
-            NSColor(calibratedRed: 0.5, green: 0.7, blue: 1.0, alpha: 0.18).setStroke()
+            NSColor(calibratedRed: 0.5, green: 0.7, blue: 1.0, alpha: 0.18 * backgroundOpacity).setStroke()
             glow.lineWidth = 3
             glow.stroke()
         }
@@ -369,11 +380,11 @@ class ToggleButtonView: NSView {
         let top: NSColor
         let bottom: NSColor
         if isHovered {
-            top = NSColor(calibratedRed: 0.30, green: 0.42, blue: 0.62, alpha: 0.97)
-            bottom = NSColor(calibratedRed: 0.16, green: 0.23, blue: 0.36, alpha: 0.97)
+            top = NSColor(calibratedRed: 0.30, green: 0.42, blue: 0.62, alpha: 0.97 * backgroundOpacity)
+            bottom = NSColor(calibratedRed: 0.16, green: 0.23, blue: 0.36, alpha: 0.97 * backgroundOpacity)
         } else {
-            top = NSColor(calibratedRed: 0.22, green: 0.30, blue: 0.44, alpha: 0.92)
-            bottom = NSColor(calibratedRed: 0.11, green: 0.15, blue: 0.24, alpha: 0.92)
+            top = NSColor(calibratedRed: 0.22, green: 0.30, blue: 0.44, alpha: 0.92 * backgroundOpacity)
+            bottom = NSColor(calibratedRed: 0.11, green: 0.15, blue: 0.24, alpha: 0.92 * backgroundOpacity)
         }
         if let gradient = NSGradient(starting: top, ending: bottom) {
             gradient.draw(in: path, angle: -90)
@@ -383,7 +394,8 @@ class ToggleButtonView: NSView {
         }
 
         // Accent ring (reflects market direction)
-        accentRingColor().setStroke()
+        let ringColor = accentRingColor()
+        ringColor.withAlphaComponent(ringColor.alphaComponent * backgroundOpacity).setStroke()
         path.lineWidth = isHovered ? 2 : 1.5
         path.stroke()
 
@@ -433,6 +445,271 @@ class ToggleButtonView: NSView {
             pulse()
             onClick?()
         }
+    }
+}
+
+// MARK: - Marquee Widget View
+class MarqueeWidgetView: NSView {
+    var onClick: (() -> Void)?
+    var backgroundOpacity: CGFloat = 0.85 {
+        didSet { needsDisplay = true }
+    }
+    var accentChange: Double = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    private var symbols: [String] = []
+    private var prices: [String: PriceData] = [:]
+    private var isHovered = false
+    private var scrollOffset: CGFloat = 0
+    private var scrollTimer: Timer?
+    private var trackingArea: NSTrackingArea?
+
+    private let sidePadding: CGFloat = 14
+    private let itemGap: CGFloat = 28
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    deinit {
+        scrollTimer?.invalidate()
+    }
+
+    private func setup() {
+        wantsLayer = true
+        setupTrackingArea()
+        startScrolling()
+    }
+
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    private func setupTrackingArea() {
+        if let trackingArea = trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        setupTrackingArea()
+    }
+
+    func setMarketData(symbols: [String], prices: [String: PriceData]) {
+        self.symbols = symbols
+        self.prices = prices
+        needsDisplay = true
+    }
+
+    private func startScrolling() {
+        scrollTimer?.invalidate()
+        scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.scrollOffset += self.isHovered ? 0.35 : 0.75
+            let cycle = max(self.marqueeWidth() + 42, 1)
+            if self.scrollOffset > cycle {
+                self.scrollOffset -= cycle
+            }
+            self.needsDisplay = true
+        }
+    }
+
+    private func accentColor(alpha: CGFloat = 1) -> NSColor {
+        if accentChange > 0.05 {
+            return NSColor(calibratedRed: 0.30, green: 0.90, blue: 0.55, alpha: alpha)
+        } else if accentChange < -0.05 {
+            return NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: alpha)
+        }
+        return NSColor(calibratedRed: 0.45, green: 0.60, blue: 0.86, alpha: alpha)
+    }
+
+    private func attributes(font: NSFont, color: NSColor) -> [NSAttributedString.Key: Any] {
+        return [
+            .font: font,
+            .foregroundColor: color
+        ]
+    }
+
+    private var symbolAttrs: [NSAttributedString.Key: Any] {
+        attributes(font: NSFont.systemFont(ofSize: 13, weight: .bold), color: .white)
+    }
+
+    private var priceAttrs: [NSAttributedString.Key: Any] {
+        attributes(
+            font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+            color: NSColor(calibratedWhite: 1, alpha: 0.86)
+        )
+    }
+
+    private var loadingAttrs: [NSAttributedString.Key: Any] {
+        attributes(
+            font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            color: NSColor(calibratedWhite: 1, alpha: 0.58)
+        )
+    }
+
+    private func changeAttrs(for change: Double) -> [NSAttributedString.Key: Any] {
+        let color = change >= 0
+            ? NSColor(calibratedRed: 0.30, green: 0.90, blue: 0.55, alpha: 1)
+            : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 1)
+        return attributes(font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium), color: color)
+    }
+
+    private func measuredTextWidth(_ text: String, attrs: [NSAttributedString.Key: Any]) -> CGFloat {
+        return ceil(text.size(withAttributes: attrs).width)
+    }
+
+    private func itemWidth(for symbol: String) -> CGFloat {
+        guard let data = prices[symbol], !data.hasError, data.price > 0 else {
+            return measuredTextWidth(symbol, attrs: symbolAttrs)
+                + 6
+                + measuredTextWidth("Loading", attrs: loadingAttrs)
+        }
+
+        let priceText = PriceFormatter.shared.compact(data.price)
+        let changeText = String(format: "%@%.2f%%", data.change24h >= 0 ? "+" : "", data.change24h)
+        return measuredTextWidth(symbol, attrs: symbolAttrs)
+            + 8
+            + measuredTextWidth(priceText, attrs: priceAttrs)
+            + 8
+            + measuredTextWidth(changeText, attrs: changeAttrs(for: data.change24h))
+    }
+
+    private func marqueeWidth() -> CGFloat {
+        let activeSymbols = symbols.isEmpty ? ["BTC"] : symbols
+        let width = activeSymbols.reduce(CGFloat(0)) { partial, symbol in
+            partial + itemWidth(for: symbol) + itemGap
+        }
+        return max(width, bounds.width - sidePadding * 2)
+    }
+
+    private func drawItems(startingAt startX: CGFloat, baselineY: CGFloat) {
+        let activeSymbols = symbols.isEmpty ? ["BTC"] : symbols
+        var x = startX
+
+        for symbol in activeSymbols {
+            symbol.draw(at: NSPoint(x: x, y: baselineY), withAttributes: symbolAttrs)
+            x += measuredTextWidth(symbol, attrs: symbolAttrs) + 8
+
+            if let data = prices[symbol], !data.hasError, data.price > 0 {
+                let priceText = PriceFormatter.shared.compact(data.price)
+                priceText.draw(at: NSPoint(x: x, y: baselineY), withAttributes: priceAttrs)
+                x += measuredTextWidth(priceText, attrs: priceAttrs) + 8
+
+                let changeText = String(format: "%@%.2f%%", data.change24h >= 0 ? "+" : "", data.change24h)
+                changeText.draw(at: NSPoint(x: x, y: baselineY), withAttributes: changeAttrs(for: data.change24h))
+                x += measuredTextWidth(changeText, attrs: changeAttrs(for: data.change24h))
+            } else {
+                "Loading".draw(at: NSPoint(x: x, y: baselineY), withAttributes: loadingAttrs)
+                x += measuredTextWidth("Loading", attrs: loadingAttrs)
+            }
+
+            let dotAttrs = attributes(
+                font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+                color: NSColor(calibratedWhite: 1, alpha: 0.25)
+            )
+            let dotX = x + itemGap / 2 - 2
+            "•".draw(at: NSPoint(x: dotX, y: baselineY + 1), withAttributes: dotAttrs)
+            x += itemGap
+        }
+    }
+
+    private func pulse() {
+        guard let layer = self.layer else { return }
+        let animation = CAKeyframeAnimation(keyPath: "transform.scale")
+        animation.values = [1.0, 0.97, 1.0]
+        animation.keyTimes = [0.0, 0.4, 1.0]
+        animation.duration = 0.18
+        animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(animation, forKey: "pulse")
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        needsDisplay = true
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let location = convert(event.locationInWindow, from: nil)
+        if bounds.contains(location) {
+            pulse()
+            onClick?()
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let rect = bounds.insetBy(dx: 2, dy: 3)
+        let background = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+
+        let top = isHovered
+            ? NSColor(calibratedRed: 0.20, green: 0.28, blue: 0.42, alpha: 0.96 * backgroundOpacity)
+            : NSColor(calibratedRed: 0.14, green: 0.20, blue: 0.32, alpha: 0.94 * backgroundOpacity)
+        let bottom = isHovered
+            ? NSColor(calibratedRed: 0.10, green: 0.15, blue: 0.24, alpha: 0.96 * backgroundOpacity)
+            : NSColor(calibratedRed: 0.07, green: 0.10, blue: 0.18, alpha: 0.94 * backgroundOpacity)
+
+        if let gradient = NSGradient(starting: top, ending: bottom) {
+            gradient.draw(in: background, angle: -90)
+        } else {
+            bottom.setFill()
+            background.fill()
+        }
+
+        accentColor(alpha: (isHovered ? 0.30 : 0.18) * backgroundOpacity).setStroke()
+        background.lineWidth = 1
+        background.stroke()
+
+        NSGraphicsContext.saveGraphicsState()
+        background.addClip()
+
+        let baselineY = (bounds.height - 15) / 2
+        let cycle = marqueeWidth() + 42
+        let startX = sidePadding - scrollOffset
+        drawItems(startingAt: startX, baselineY: baselineY)
+        drawItems(startingAt: startX + cycle, baselineY: baselineY)
+        if startX + cycle < bounds.width {
+            drawItems(startingAt: startX + cycle * 2, baselineY: baselineY)
+        }
+
+        let leftFade = NSBezierPath(rect: NSRect(x: rect.minX, y: rect.minY + 2, width: 22, height: rect.height - 4))
+        if let gradient = NSGradient(
+            starting: NSColor(calibratedRed: 0.09, green: 0.13, blue: 0.22, alpha: 0.72 * backgroundOpacity),
+            ending: NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.19, alpha: 0)
+        ) {
+            gradient.draw(in: leftFade, angle: 0)
+        }
+
+        let rightFade = NSBezierPath(rect: NSRect(x: rect.maxX - 22, y: rect.minY + 2, width: 22, height: rect.height - 4))
+        if let gradient = NSGradient(
+            starting: NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.19, alpha: 0),
+            ending: NSColor(calibratedRed: 0.09, green: 0.13, blue: 0.22, alpha: 0.72 * backgroundOpacity)
+        ) {
+            gradient.draw(in: rightFade, angle: 0)
+        }
+
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
@@ -1269,7 +1546,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var config: AppConfig!
     var cryptoRows: [String: CryptoRowView] = [:]
     var updateTimer: Timer?
-    var toggleButton: ToggleButtonView!
+    var toggleButton: ToggleButtonView?
+    var marqueeWidget: MarqueeWidgetView?
     var contentPanel: GlassContentView?
     var containerView: NSView!
     var chartWindow: ChartPopupWindow?
@@ -1281,6 +1559,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var refreshRateMenu: NSMenu!
     var removeMenu: NSMenu!
     var menuBarMenu: NSMenu!
+    var floatingWidgetMenu: NSMenu!
     var expandCollapseItem: NSMenuItem!
     var sparklineToggleItem: NSMenuItem!
     var updatedLabel: NSTextField?
@@ -1290,6 +1569,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var chartCache: [String: (points: [ChartPoint], fetchedAt: Date)] = [:]
 
     let toggleButtonSize: CGFloat = 44
+    let marqueeWidgetWidth: CGFloat = 274
     let panelWidth: CGFloat = 220
     let chartPopupSize = NSSize(width: 300, height: 190)
     let headerHeight: CGFloat = 30
@@ -1315,8 +1595,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return config.showSparklines ? 48 : 30
     }
 
+    var panelContentHeight: CGFloat {
+        return headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding
+    }
+
+    var floatingWidgetWidth: CGFloat {
+        return config.floatingWidgetMode == .marquee ? marqueeWidgetWidth : toggleButtonSize
+    }
+
+    var currentPanelWidth: CGFloat {
+        return config.floatingWidgetMode == .marquee ? marqueeWidgetWidth : panelWidth
+    }
+
     var expandedWidth: CGFloat {
-        return toggleButtonSize + 10 + panelWidth + 5
+        if config.floatingWidgetMode == .marquee {
+            return max(floatingWidgetWidth, currentPanelWidth) + 10
+        }
+        return floatingWidgetWidth + 10 + currentPanelWidth + 5
+    }
+
+    var shouldUseWindowShadow: Bool {
+        return config.floatingWidgetMode == .bitcoin
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -1361,6 +1660,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(expandCollapseItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        // Floating widget submenu
+        floatingWidgetMenu = NSMenu()
+        updateFloatingWidgetMenu()
+        let floatingWidgetItem = NSMenuItem(title: "Floating Widget", action: nil, keyEquivalent: "")
+        floatingWidgetItem.submenu = floatingWidgetMenu
+        menu.addItem(floatingWidgetItem)
 
         // Transparency submenu
         transparencyMenu = NSMenu()
@@ -1468,12 +1774,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func updateFloatingWidgetMenu() {
+        floatingWidgetMenu.removeAllItems()
+
+        let choices: [(title: String, mode: FloatingWidgetMode)] = [
+            ("Simple Bitcoin", .bitcoin),
+            ("Marquee Prices", .marquee)
+        ]
+
+        for choice in choices {
+            let item = NSMenuItem(title: choice.title, action: #selector(setFloatingWidgetMode(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = choice.mode.rawValue
+            item.state = config.floatingWidgetMode == choice.mode ? .on : .off
+            floatingWidgetMenu.addItem(item)
+        }
+    }
+
+    func updateWindowShadow() {
+        floatingWindow?.hasShadow = shouldUseWindowShadow
+    }
+
     func calculateWindowSize() -> (width: CGFloat, height: CGFloat) {
         if config.isExpanded {
-            let contentHeight = headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding
-            return (expandedWidth, max(contentHeight + 10, toggleButtonSize + 10))
+            if config.floatingWidgetMode == .marquee {
+                let height = panelContentHeight + toggleButtonSize + 15
+                return (expandedWidth, max(height, toggleButtonSize + 10))
+            }
+            return (expandedWidth, max(panelContentHeight + 10, toggleButtonSize + 10))
         } else {
-            return (toggleButtonSize + 10, toggleButtonSize + 10)
+            return (floatingWidgetWidth + 10, toggleButtonSize + 10)
         }
     }
 
@@ -1483,20 +1813,72 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         floatingWindow = FloatingWindow(contentRect: frame, styleMask: [], backing: .buffered, defer: false)
         floatingWindow.alphaValue = 1
+        floatingWindow.hasShadow = shouldUseWindowShadow
 
         containerView = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         floatingWindow.contentView = containerView
 
-        toggleButton = ToggleButtonView(frame: NSRect(x: 5, y: 5, width: toggleButtonSize, height: toggleButtonSize))
-        toggleButton.isExpanded = config.isExpanded
-        toggleButton.onClick = { [weak self] in
-            self?.toggleExpanded()
-        }
-        containerView.addSubview(toggleButton)
+        setupFloatingWidget()
 
         setupContentPanel()
 
         floatingWindow.makeKeyAndOrderFront(nil)
+    }
+
+    func setupFloatingWidget() {
+        toggleButton?.removeFromSuperview()
+        marqueeWidget?.removeFromSuperview()
+        toggleButton = nil
+        marqueeWidget = nil
+
+        let frame = floatingWidgetFrame()
+
+        switch config.floatingWidgetMode {
+        case .bitcoin:
+            let button = ToggleButtonView(frame: frame)
+            button.isExpanded = config.isExpanded
+            button.backgroundOpacity = CGFloat(config.transparency)
+            button.onClick = { [weak self] in
+                self?.toggleExpanded()
+            }
+            containerView.addSubview(button)
+            toggleButton = button
+
+        case .marquee:
+            let marquee = MarqueeWidgetView(frame: frame)
+            marquee.backgroundOpacity = CGFloat(config.transparency)
+            marquee.onClick = { [weak self] in
+                self?.toggleExpanded()
+            }
+            marquee.setMarketData(symbols: config.cryptos, prices: latestPrices)
+            containerView.addSubview(marquee)
+            marqueeWidget = marquee
+        }
+
+        updateAccent()
+    }
+
+    func floatingWidgetFrame() -> NSRect {
+        if config.floatingWidgetMode == .marquee, config.isExpanded {
+            return NSRect(
+                x: 5,
+                y: max(containerView.bounds.height - toggleButtonSize - 5, 5),
+                width: floatingWidgetWidth,
+                height: toggleButtonSize
+            )
+        }
+
+        return NSRect(x: 5, y: 5, width: floatingWidgetWidth, height: toggleButtonSize)
+    }
+
+    func layoutFloatingWidget() {
+        let frame = floatingWidgetFrame()
+        toggleButton?.frame = frame
+        toggleButton?.isExpanded = config.isExpanded
+        toggleButton?.backgroundOpacity = CGFloat(config.transparency)
+        marqueeWidget?.frame = frame
+        marqueeWidget?.backgroundOpacity = CGFloat(config.transparency)
+        marqueeWidget?.setMarketData(symbols: config.cryptos, prices: latestPrices)
     }
 
     func setupContentPanel() {
@@ -1506,9 +1888,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard config.isExpanded else { return }
 
-        let contentHeight = headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding
+        let contentHeight = panelContentHeight
+        let panelW = currentPanelWidth
+        let panelX: CGFloat
+        if config.floatingWidgetMode == .marquee {
+            panelX = max((containerView.bounds.width - panelW) / 2, 5)
+        } else {
+            panelX = floatingWidgetWidth + 10
+        }
 
-        contentPanel = GlassContentView(frame: NSRect(x: toggleButtonSize + 10, y: 5, width: panelWidth, height: contentHeight))
+        contentPanel = GlassContentView(frame: NSRect(x: panelX, y: 5, width: panelW, height: contentHeight))
         contentPanel?.backgroundOpacity = CGFloat(config.transparency)
         containerView.addSubview(contentPanel!)
 
@@ -1528,7 +1917,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updated.isBezeled = false
         updated.drawsBackground = false
         updated.isEditable = false
-        updated.frame = NSRect(x: panelWidth - 124, y: contentHeight - 23, width: 110, height: 16)
+        updated.frame = NSRect(x: panelW - 124, y: contentHeight - 23, width: 110, height: 16)
         contentPanel?.addSubview(updated)
         updatedLabel = updated
 
@@ -1536,7 +1925,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let yPos = contentHeight - headerHeight - (CGFloat(index + 1) * rowHeight)
 
             let row = CryptoRowView(
-                frame: NSRect(x: 0, y: yPos, width: panelWidth, height: rowHeight),
+                frame: NSRect(x: 0, y: yPos, width: panelW, height: rowHeight),
                 symbol: symbol,
                 showSparkline: config.showSparklines
             )
@@ -1666,8 +2055,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hideChartPopup()
         config.isExpanded.toggle()
         config.save()
+        updateWindowShadow()
 
-        toggleButton.isExpanded = config.isExpanded
+        toggleButton?.isExpanded = config.isExpanded
         expandCollapseItem.title = config.isExpanded ? "Collapse Prices" : "Expand Prices"
 
         let (width, height) = calculateWindowSize()
@@ -1681,7 +2071,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         containerView.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        toggleButton.frame = NSRect(x: 5, y: 5, width: toggleButtonSize, height: toggleButtonSize)
+        layoutFloatingWidget()
 
         if config.isExpanded {
             setupContentPanel()
@@ -1696,6 +2086,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func rebuildWindow() {
         guard config.isExpanded else { return }
         hideChartPopup()
+        updateWindowShadow()
 
         let (width, height) = calculateWindowSize()
         var frame = floatingWindow.frame
@@ -1704,7 +2095,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         floatingWindow.setFrame(frame, display: true)
 
         containerView.frame = NSRect(x: 0, y: 0, width: width, height: height)
-        toggleButton.frame = NSRect(x: 5, y: 5, width: toggleButtonSize, height: toggleButtonSize)
+        setupFloatingWidget()
 
         setupContentPanel()
         refreshPrices()
@@ -1726,13 +2117,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func refreshPrices() {
-        guard config.isExpanded else { return }
+        guard !config.cryptos.isEmpty else {
+            latestPrices = [:]
+            marqueeWidget?.setMarketData(symbols: config.cryptos, prices: latestPrices)
+            updateMenuBarTitle()
+            updateAccent()
+            updateStatusLabel()
+            return
+        }
 
         CryptoAPI.shared.fetchAllPrices(for: config.cryptos) { [weak self] prices in
             guard let self = self else { return }
             self.latestPrices = prices
-            for (symbol, data) in prices {
-                self.cryptoRows[symbol]?.update(price: data.price, change: data.change24h, hasError: data.hasError)
+            self.marqueeWidget?.setMarketData(symbols: self.config.cryptos, prices: prices)
+
+            if self.config.isExpanded {
+                for (symbol, data) in prices {
+                    self.cryptoRows[symbol]?.update(price: data.price, change: data.change24h, hasError: data.hasError)
+                }
             }
             if let activeSymbol = self.activeChartSymbol {
                 self.chartContentView?.setSummary(prices[activeSymbol])
@@ -1740,7 +2142,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateMenuBarTitle()
             self.updateAccent()
             self.updateStatusLabel()
-            self.refreshSparklines()
+            if self.config.isExpanded {
+                self.refreshSparklines()
+            }
         }
     }
 
@@ -1779,9 +2183,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func updateAccent() {
         let primary = config.menuBarSymbol ?? config.cryptos.first
         if let p = primary, let data = latestPrices[p], !data.hasError {
-            toggleButton.accentChange = data.change24h
+            toggleButton?.accentChange = data.change24h
+            marqueeWidget?.accentChange = data.change24h
         } else {
-            toggleButton.accentChange = 0
+            toggleButton?.accentChange = 0
+            marqueeWidget?.accentChange = 0
         }
     }
 
@@ -1816,11 +2222,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         toggleExpanded()
     }
 
+    @objc func setFloatingWidgetMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = FloatingWidgetMode(rawValue: rawValue),
+              mode != config.floatingWidgetMode else {
+            return
+        }
+
+        hideChartPopup()
+        config.floatingWidgetMode = mode
+        config.save()
+        updateFloatingWidgetMenu()
+        updateWindowShadow()
+
+        let (width, height) = calculateWindowSize()
+        var frame = floatingWindow.frame
+        frame.origin.y += frame.size.height - height
+        frame.size = NSSize(width: width, height: height)
+        floatingWindow.setFrame(frame, display: true)
+
+        containerView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        setupFloatingWidget()
+        setupContentPanel()
+
+        refreshPrices()
+    }
+
     @objc func setTransparency(_ sender: NSMenuItem) {
         let level = Double(sender.tag) / 100.0
         config.transparency = level
         config.save()
         floatingWindow.alphaValue = 1
+        toggleButton?.backgroundOpacity = CGFloat(level)
+        marqueeWidget?.backgroundOpacity = CGFloat(level)
         contentPanel?.backgroundOpacity = CGFloat(level)
         chartContentView?.backgroundOpacity = CGFloat(level)
 
@@ -1877,6 +2311,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 updateRemoveMenu()
                 updateMenuBarMenu()
                 rebuildWindow()
+                if !config.isExpanded {
+                    marqueeWidget?.setMarketData(symbols: config.cryptos, prices: latestPrices)
+                    refreshPrices()
+                }
             }
         }
     }
@@ -1897,18 +2335,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuBarMenu()
         updateMenuBarTitle()
         rebuildWindow()
+        if !config.isExpanded {
+            marqueeWidget?.setMarketData(symbols: config.cryptos, prices: latestPrices)
+            refreshPrices()
+        }
     }
 
     @objc func resetDefaults() {
         hideChartPopup()
         config.cryptos = AppConfig.default.cryptos
         config.refreshRate = AppConfig.default.refreshRate
+        config.floatingWidgetMode = AppConfig.default.floatingWidgetMode
         sanitizeMenuBarSymbol()
         config.save()
+        updateWindowShadow()
         updateRemoveMenu()
         updateMenuBarMenu()
+        updateFloatingWidgetMenu()
         updateMenuBarTitle()
         rebuildWindow()
+        if !config.isExpanded {
+            let (width, height) = calculateWindowSize()
+            var frame = floatingWindow.frame
+            frame.origin.y += frame.size.height - height
+            frame.size = NSSize(width: width, height: height)
+            floatingWindow.setFrame(frame, display: true)
+            containerView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+            setupFloatingWidget()
+            refreshPrices()
+        }
         restartUpdateTimer()
 
         for item in refreshRateMenu.items {
