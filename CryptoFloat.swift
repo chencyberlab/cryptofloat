@@ -521,7 +521,7 @@ class MarqueeWidgetView: NSView {
         scrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             self.scrollOffset += self.isHovered ? 0.35 : 0.75
-            let cycle = max(self.marqueeWidth() + 42, 1)
+            let cycle = max(self.marqueeWidth(), 1)
             if self.scrollOffset > cycle {
                 self.scrollOffset -= cycle
             }
@@ -685,7 +685,7 @@ class MarqueeWidgetView: NSView {
         background.addClip()
 
         let baselineY = (bounds.height - 15) / 2
-        let cycle = marqueeWidth() + 42
+        let cycle = marqueeWidth()
         let startX = sidePadding - scrollOffset
         drawItems(startingAt: startX, baselineY: baselineY)
         drawItems(startingAt: startX + cycle, baselineY: baselineY)
