@@ -1,67 +1,60 @@
-# CryptoFloat (Swift Version)
+# CryptoFloat
 
-A native macOS menu bar app for tracking cryptocurrency prices with a floating, collapsible window.
-<img width="1318" height="662" alt="CleanShot 2026-02-13 at 09 44 41@2x" src="https://github.com/user-attachments/assets/a56095d0-de24-4570-a9b8-db548b1bb353" />
+A native macOS menu bar app for tracking cryptocurrency prices in a floating, draggable widget.
 
+<img width="1318" height="662" alt="CryptoFloat screenshot" src="https://github.com/user-attachments/assets/a56095d0-de24-4570-a9b8-db548b1bb353" />
 
 ## Features
 
-- **Native Swift** – No Python dependencies, runs natively on macOS
-- **Collapsible Toggle Button** – Click the ₿ button to expand/collapse, with a hover glow and an accent ring that turns green/red with the market
-- **Floating Window** – Always-on-top with liquid-glass styling
-- **Sparklines** – A 24h mini trend line on each row (toggleable)
-- **Menu-Bar Price Ticker** – Optionally show any tracked coin's live price right in the menu bar
-- **Hover Highlights** – Rows light up as you mouse over them
-- **Resilient** – Keeps the last known price (dimmed) during a network blip instead of blanking to "Error", and shows a live "updated / reconnecting…" status
-- **Menu Bar Controls** – All settings accessible from the menu bar
-- **Adjustable Transparency** – 50% to 100% opacity
-- **Adjustable Refresh Rate** – 5 seconds to 5 minutes (default 30s)
-- **24h Change** – Color-coded price changes (green/red) with up/down tick animations
-- **Draggable** – Position the window anywhere on screen
-- **Persistent Settings** – Remembers your preferences (and tolerates older/partial config files)
+- **Native Swift** - no Python runtime or web UI required.
+- **Two floating widget modes** - choose between the compact Bitcoin button or a scrolling marquee ticker.
+- **Marquee price widget** - shows tracked symbols, live prices, and 24h percentage changes while the main panel is collapsed.
+- **Dropdown price panel** - expands from the floating widget and stays always on top.
+- **7-day chart popup** - click any crypto row to open a small chart popup; click anywhere to hide it.
+- **Interactive chart hover** - move over the 7-day chart to see historical candle prices and times.
+- **24h sparklines** - optional mini trend line on each row.
+- **Menu-bar ticker** - optionally show one tracked coin's price in the macOS menu bar.
+- **Background-only transparency** - the widget background fades from 50% to 100%, while text and charts stay readable.
+- **Color-coded movement** - green/red 24h changes, price-change flashes, arrows, and accent tinting.
+- **Resilient updates** - keeps the last known price during network hiccups and shows updated/reconnecting status.
+- **Generated app icon** - build script creates and bundles a modern line-chart app icon.
+- **Persistent settings** - remembers tracked coins, widget mode, position, refresh rate, transparency, and display preferences.
 
 ## Data Source
 
-Prices come from the **public KuCoin API** (`api.kucoin.com`). Each coin is tracked
-as a `SYMBOL-USDT` trading pair, and sparklines use hourly candles.
+Prices come from the public KuCoin API (`api.kucoin.com`). Each coin is tracked as a `SYMBOL-USDT` trading pair.
+
+- Current price and 24h change use KuCoin market stats.
+- Row sparklines use hourly candle data.
+- The detail popup uses 2-hour candles across roughly 7 days.
 
 ## Requirements
 
-- macOS 11.0 (Big Sur) or later
+- macOS 11.0 Big Sur or later
 - Xcode Command Line Tools
 
-## Quick Start
-
-### Step 1: Install Xcode Command Line Tools (if not already installed)
+Install command line tools if needed:
 
 ```bash
 xcode-select --install
 ```
 
-### Step 2: Download and extract the files
+## Quick Start
 
-Put `CryptoFloat.swift` and `build.sh` in a folder, e.g.:
-```
-~/Desktop/Development/crypto_float/
-```
-
-### Step 3: Build the app
+Put `CryptoFloat.swift`, `generate_icon.swift`, and `build.sh` in the same folder, then build:
 
 ```bash
-cd ~/Desktop/Development/crypto_float
 chmod +x build.sh
 ./build.sh
 ```
 
-### Step 4: Run the app
+Run the app:
 
 ```bash
 open CryptoFloat.app
 ```
 
-Or double-click `CryptoFloat.app` in Finder.
-
-### Step 5: (Optional) Install to Applications
+Optional install:
 
 ```bash
 cp -r CryptoFloat.app /Applications/
@@ -69,85 +62,134 @@ cp -r CryptoFloat.app /Applications/
 
 ## Usage
 
-### Toggle Button
-- **Click the ₿ button** to expand/collapse the price panel
-- **Drag** anywhere on the window background to reposition
-- The ring around the button is tinted by the primary coin's 24h direction (green = up, red = down)
+### Floating Widget
 
-### Menu Bar (₿ icon)
+- Drag the floating widget to reposition the app.
+- Click the widget to expand or collapse the price panel.
+- In **Simple Bitcoin** mode, the widget is a compact Bitcoin button.
+- In **Marquee Prices** mode, the widget scrolls tracked coins horizontally with price and 24h change.
+- In marquee mode, the expanded price panel drops down below the marquee bar and matches its width.
+
+### Price Panel
+
+- Hover rows for a subtle highlight.
+- Click a row to open a 7-day chart popup.
+- Move over the chart line to inspect historical price points.
+- Click anywhere outside the chart popup to dismiss it.
+- If sparklines are enabled, each row shows a small 24h trend chart.
+
+### Menu Bar
+
 | Menu Item | Description |
-|-----------|-------------|
-| Show/Hide Window | Toggle window visibility |
-| Expand/Collapse Prices | Same as clicking the button |
-| Transparency | Adjust window opacity (50%–100%) |
-| Refresh Rate | How often prices update (5s–5min) |
-| Show Sparklines | Toggle the 24h mini charts |
-| Menu Bar Display | Show a coin's price in the menu bar, or just the ₿ icon |
-| Add Cryptocurrency… | Add by trading symbol (paired with USDT) |
-| Remove Cryptocurrency | Remove a tracked coin |
-| Reset to Defaults | Restore BTC, ETH, SOL |
-| Refresh Now | Force a price refresh (⌘R) |
-| Quit CryptoFloat | Exit the app (⌘Q) |
+| --- | --- |
+| Show/Hide Window | Toggle floating window visibility |
+| Expand/Collapse Prices | Same as clicking the floating widget |
+| Floating Widget | Choose Simple Bitcoin or Marquee Prices |
+| Transparency | Adjust background opacity from 50% to 100% |
+| Refresh Rate | Choose update interval from 5 seconds to 5 minutes |
+| Show Sparklines | Toggle row mini charts |
+| Menu Bar Display | Show a coin's price in the macOS menu bar, or only the Bitcoin symbol |
+| Add Cryptocurrency... | Add a tracked symbol paired with USDT |
+| Remove Cryptocurrency | Remove a tracked symbol |
+| Reset to Defaults | Restore BTC, ETH, SOL and default settings |
+| Refresh Now | Force a price refresh |
+| Quit CryptoFloat | Exit the app |
 
 ### Adding Cryptocurrencies
 
-1. Click ₿ in the menu bar
-2. Select "Add Cryptocurrency…"
-3. Enter the **trading symbol** (it is automatically paired with USDT)
+1. Open the menu bar item.
+2. Select **Add Cryptocurrency...**.
+3. Enter a trading symbol such as `BTC`, `ETH`, `SOL`, or `DOGE`.
 
-**Common symbols:**
-- `BTC` – Bitcoin
-- `ETH` – Ethereum
-- `SOL` – Solana
-- `ADA` – Cardano
-- `DOGE` – Dogecoin
-- `XRP` – Ripple
-- `DOT` – Polkadot
+CryptoFloat automatically tracks the symbol as `SYMBOL-USDT` on KuCoin.
 
-Any symbol that KuCoin lists against USDT will work (e.g. `AVAX`, `LINK`, `MATIC`).
+Common symbols:
+
+- `BTC` - Bitcoin
+- `ETH` - Ethereum
+- `SOL` - Solana
+- `ADA` - Cardano
+- `DOGE` - Dogecoin
+- `XRP` - XRP
+- `DOT` - Polkadot
+- `AVAX` - Avalanche
+- `LINK` - Chainlink
+
+Any symbol listed on KuCoin against USDT should work.
+
+## Build Output
+
+The build script creates:
+
+- `CryptoFloat.app`
+- `AppIcon.icns`
+- `AppIcon.iconset/`
+
+`generate_icon.swift` draws the app icon and `iconutil` packages it into the macOS `.icns` format. The generated icon is copied into `CryptoFloat.app/Contents/Resources/` and referenced by `Info.plist`.
 
 ## Configuration
 
-Settings are stored in: `~/.cryptofloat_config.json`
+Settings are stored at:
+
+```text
+~/.cryptofloat_config.json
+```
+
+Example:
 
 ```json
 {
-  "cryptos": ["BTC", "ETH", "SOL"],
-  "transparency": 0.85,
-  "windowX": 100,
-  "windowY": 100,
+  "cryptos": [
+    "BTC",
+    "ETH",
+    "SOL"
+  ],
+  "floatingWidgetMode": "bitcoin",
   "isExpanded": true,
+  "menuBarSymbol": null,
   "refreshRate": 30,
   "showSparklines": true,
-  "menuBarSymbol": null
+  "transparency": 0.85,
+  "windowX": 100,
+  "windowY": 100
 }
 ```
 
-The config loader is tolerant: if a key is missing or a new version adds fields,
-your existing settings are preserved and only the missing values fall back to defaults.
+`floatingWidgetMode` can be:
+
+- `"bitcoin"` - compact Bitcoin button
+- `"marquee"` - scrolling price ticker
+
+The config loader is tolerant: missing or malformed keys fall back to defaults, so older config files still work.
 
 ## Troubleshooting
 
-### "App is damaged" or won't open
+### App Is Damaged Or Will Not Open
 
 ```bash
 xattr -cr CryptoFloat.app
 open CryptoFloat.app
 ```
 
-### Build fails
+### Build Fails
 
 Make sure Xcode Command Line Tools are installed:
+
 ```bash
 xcode-select --install
 ```
 
-### Prices show "—" or "reconnecting…"
+### Prices Show `-` Or `reconnecting...`
 
-- Check your internet connection
-- The KuCoin API might be temporarily unavailable, or the symbol may not be listed against USDT
-- Click "Refresh Now" to retry (the last known price stays visible, dimmed, during outages)
+- Check your internet connection.
+- KuCoin may be temporarily unavailable.
+- The symbol may not be listed against USDT.
+- Use **Refresh Now** from the menu bar.
+
+### Icon Does Not Update Immediately
+
+macOS may cache app icons. Try quitting the app, rebuilding, and opening the fresh `CryptoFloat.app`. If it was copied to `/Applications`, replace the old copy.
 
 ## License
 
-MIT License – Feel free to modify and distribute.
+MIT License - feel free to modify and distribute.
