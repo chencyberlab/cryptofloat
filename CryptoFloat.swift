@@ -126,6 +126,11 @@ struct PriceData {
     let hasError: Bool
 }
 
+struct ChartPoint {
+    let time: TimeInterval
+    let price: Double
+}
+
 // MARK: - KuCoin API Manager
 class CryptoAPI {
     static let shared = CryptoAPI()
@@ -241,6 +246,59 @@ class CryptoAPI {
             }
             let chronological = Array(closesNewestFirst.reversed())
             let trimmed = Array(chronological.suffix(32))
+
+            DispatchQueue.main.async { completion(trimmed) }
+        }.resume()
+    }
+
+    /// Fetches 7 days of two-hour closing prices for the detail popup chart.
+    /// Returns an empty array on any failure so the popup can show a soft error state.
+    func fetchSevenDayChart(for symbol: String, completion: @escaping ([ChartPoint]) -> Void) {
+        let pair = "\(symbol.uppercased())-USDT"
+        let end = Int(Date().timeIntervalSince1970)
+        let start = end - 60 * 60 * 24 * 7
+        let urlString = "\(baseURL)/api/v1/market/candles?type=2hour&symbol=\(pair)&startAt=\(start)&endAt=\(end)"
+
+        guard let url = URL(string: urlString) else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("CryptoFloat/1.1", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let code = json["code"] as? String, code == "200000",
+                  let rows = json["data"] as? [[Any]] else {
+                DispatchQueue.main.async { completion([]) }
+                return
+            }
+
+            // Each candle: [time, open, close, high, low, volume, turnover], newest first.
+            let pointsNewestFirst: [ChartPoint] = rows.compactMap { row in
+                guard row.count > 2,
+                      let priceString = row[2] as? String,
+                      let price = Double(priceString) else {
+                    return nil
+                }
+
+                let time: TimeInterval?
+                if let timeString = row[0] as? String {
+                    time = TimeInterval(timeString)
+                } else if let timeNumber = row[0] as? NSNumber {
+                    time = timeNumber.doubleValue
+                } else {
+                    time = nil
+                }
+
+                guard let time = time else { return nil }
+                return ChartPoint(time: time, price: price)
+            }
+            let chronological = Array(pointsNewestFirst.reversed())
+            let trimmed = Array(chronological.suffix(90))
 
             DispatchQueue.main.async { completion(trimmed) }
         }.resume()
@@ -379,7 +437,12 @@ class ToggleButtonView: NSView {
 }
 
 // MARK: - Glass Content View
-class GlassContentView: NSVisualEffectView {
+class GlassContentView: NSView {
+    private let cornerRadius: CGFloat = 22
+    var backgroundOpacity: CGFloat = 0.85 {
+        didSet { needsDisplay = true }
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         setup()
@@ -391,30 +454,61 @@ class GlassContentView: NSVisualEffectView {
     }
 
     private func setup() {
-        blendingMode = .behindWindow
-        material = .hudWindow
-        state = .active
         wantsLayer = true
-        layer?.cornerRadius = 16
-        layer?.masksToBounds = true
+        updateCornerMask()
+    }
+
+    override func layout() {
+        super.layout()
+        updateCornerMask()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateCornerMask()
+    }
+
+    private func updateCornerMask() {
+        guard let layer = layer else { return }
+        layer.cornerRadius = cornerRadius
+        if #available(macOS 10.15, *) {
+            layer.cornerCurve = .continuous
+        }
+        layer.masksToBounds = true
+
+        let mask = CAShapeLayer()
+        mask.frame = bounds
+        mask.path = CGPath(
+            roundedRect: bounds,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
+            transform: nil
+        )
+        layer.mask = mask
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        let path = NSBezierPath(roundedRect: bounds, xRadius: 16, yRadius: 16)
-        NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.15, alpha: 0.6).setFill()
-        path.fill()
+        let fillPath = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
+        NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.15, alpha: 0.72 * backgroundOpacity).setFill()
+        fillPath.fill()
 
         // Faint inner highlight along the top edge for a glassy sheen
         let highlight = NSBezierPath()
-        highlight.move(to: NSPoint(x: 16, y: bounds.height - 1))
-        highlight.line(to: NSPoint(x: bounds.width - 16, y: bounds.height - 1))
-        NSColor(calibratedWhite: 1, alpha: 0.12).setStroke()
+        highlight.move(to: NSPoint(x: cornerRadius, y: bounds.height - 1))
+        highlight.line(to: NSPoint(x: bounds.width - cornerRadius, y: bounds.height - 1))
+        NSColor(calibratedWhite: 1, alpha: 0.12 * backgroundOpacity).setStroke()
         highlight.lineWidth = 1
         highlight.stroke()
 
-        NSColor(calibratedRed: 0.4, green: 0.5, blue: 0.7, alpha: 0.3).setStroke()
+        let strokeRect = bounds.insetBy(dx: 0.75, dy: 0.75)
+        let path = NSBezierPath(
+            roundedRect: strokeRect,
+            xRadius: max(cornerRadius - 0.75, 0),
+            yRadius: max(cornerRadius - 0.75, 0)
+        )
+        NSColor(calibratedRed: 0.4, green: 0.5, blue: 0.7, alpha: 0.3 * backgroundOpacity).setStroke()
         path.lineWidth = 1.5
         path.stroke()
     }
@@ -491,6 +585,363 @@ class SparklineView: NSView {
         let dot = NSBezierPath(ovalIn: NSRect(x: last.x - 2, y: last.y - 2, width: 4, height: 4))
         lineColor.setFill()
         dot.fill()
+    }
+}
+
+// MARK: - Seven Day Chart Popup
+class SevenDayChartContentView: NSView {
+    private let symbol: String
+    private let cornerRadius: CGFloat = 22
+    var backgroundOpacity: CGFloat = 0.85 {
+        didSet { needsDisplay = true }
+    }
+
+    private var points: [ChartPoint] = []
+    private var isLoading = true
+    private var hasError = false
+    private var latestPrice: Double?
+    private var change24h: Double?
+    private var hoveredIndex: Int?
+    private var trackingArea: NSTrackingArea?
+
+    private lazy var hoverDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d HH:mm"
+        return f
+    }()
+
+    init(frame: NSRect, symbol: String, latest: PriceData?) {
+        self.symbol = symbol
+        if let latest = latest, !latest.hasError {
+            self.latestPrice = latest.price
+            self.change24h = latest.change24h
+        }
+        super.init(frame: frame)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not implemented")
+    }
+
+    private func setup() {
+        wantsLayer = false
+        setupTrackingArea()
+    }
+
+    override func layout() {
+        super.layout()
+        updateCornerMask()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateCornerMask()
+    }
+
+    private func updateCornerMask() {
+        guard let layer = layer else { return }
+        layer.cornerRadius = cornerRadius
+        if #available(macOS 10.15, *) {
+            layer.cornerCurve = .continuous
+        }
+        layer.masksToBounds = true
+
+        let mask = CAShapeLayer()
+        mask.frame = bounds
+        mask.path = CGPath(
+            roundedRect: bounds,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
+            transform: nil
+        )
+        layer.mask = mask
+    }
+
+    private func setupTrackingArea() {
+        if let trackingArea = trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        setupTrackingArea()
+    }
+
+    func setSummary(_ data: PriceData?) {
+        guard let data = data, !data.hasError else { return }
+        latestPrice = data.price
+        change24h = data.change24h
+        needsDisplay = true
+    }
+
+    func setPoints(_ points: [ChartPoint]) {
+        self.points = points
+        hoveredIndex = nil
+        isLoading = false
+        hasError = points.count < 2
+        needsDisplay = true
+    }
+
+    private func attributes(font: NSFont, color: NSColor, alignment: NSTextAlignment = .left) -> [NSAttributedString.Key: Any] {
+        let style = NSMutableParagraphStyle()
+        style.alignment = alignment
+        return [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: style
+        ]
+    }
+
+    private func sevenDayChange() -> Double? {
+        guard points.count >= 2,
+              let first = points.first?.price,
+              first != 0,
+              let last = points.last?.price else {
+            return nil
+        }
+        return ((last - first) / first) * 100
+    }
+
+    private func chartRect() -> NSRect {
+        return NSRect(x: 18, y: 28, width: bounds.width - 36, height: 104)
+    }
+
+    private func updateHover(at location: NSPoint?) {
+        guard points.count >= 2, let location = location, chartRect().contains(location) else {
+            if hoveredIndex != nil {
+                hoveredIndex = nil
+                needsDisplay = true
+            }
+            return
+        }
+
+        let rect = chartRect()
+        let clampedX = min(max(location.x, rect.minX), rect.maxX)
+        let ratio = (clampedX - rect.minX) / rect.width
+        let index = Int(round(ratio * CGFloat(points.count - 1)))
+        let clampedIndex = min(max(index, 0), points.count - 1)
+
+        if hoveredIndex != clampedIndex {
+            hoveredIndex = clampedIndex
+            needsDisplay = true
+        }
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        updateHover(at: nil)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let fillPath = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
+        NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.13, alpha: 0.94 * backgroundOpacity).setFill()
+        fillPath.fill()
+
+        let strokeRect = bounds.insetBy(dx: 0.75, dy: 0.75)
+        let strokePath = NSBezierPath(
+            roundedRect: strokeRect,
+            xRadius: max(cornerRadius - 0.75, 0),
+            yRadius: max(cornerRadius - 0.75, 0)
+        )
+        NSColor(calibratedRed: 0.48, green: 0.58, blue: 0.78, alpha: 0.36 * backgroundOpacity).setStroke()
+        strokePath.lineWidth = 1.5
+        strokePath.stroke()
+
+        let titleAttrs = attributes(
+            font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            color: .white
+        )
+        "\(symbol)/USDT".draw(at: NSPoint(x: 18, y: bounds.height - 33), withAttributes: titleAttrs)
+
+        let tagAttrs = attributes(
+            font: NSFont.systemFont(ofSize: 10, weight: .semibold),
+            color: NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: 0.72),
+            alignment: .right
+        )
+        "7D".draw(in: NSRect(x: bounds.width - 62, y: bounds.height - 31, width: 44, height: 14), withAttributes: tagAttrs)
+
+        let hoveredPoint = hoveredIndex.flatMap { points.indices.contains($0) ? points[$0] : nil }
+        let displayPrice = hoveredPoint?.price ?? latestPrice
+
+        if let displayPrice = displayPrice {
+            let priceAttrs = attributes(
+                font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                color: NSColor(calibratedWhite: 1, alpha: 0.82)
+            )
+            PriceFormatter.shared.format(displayPrice).draw(
+                at: NSPoint(x: 18, y: bounds.height - 54),
+                withAttributes: priceAttrs
+            )
+        }
+
+        if let hoveredPoint = hoveredPoint {
+            let dateAttrs = attributes(
+                font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
+                color: NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: 0.72),
+                alignment: .right
+            )
+            hoverDateFormatter.string(from: Date(timeIntervalSince1970: hoveredPoint.time)).draw(
+                in: NSRect(x: bounds.width - 122, y: bounds.height - 54, width: 104, height: 14),
+                withAttributes: dateAttrs
+            )
+        } else if let change = sevenDayChange() ?? change24h {
+            let isUp = change >= 0
+            let color = isUp
+                ? NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 0.95)
+                : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 0.95)
+            let changeAttrs = attributes(
+                font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
+                color: color,
+                alignment: .right
+            )
+            let text = String(format: "%@%.2f%%", isUp ? "+" : "", change)
+            text.draw(in: NSRect(x: bounds.width - 100, y: bounds.height - 54, width: 82, height: 16), withAttributes: changeAttrs)
+        }
+
+        drawChart(in: chartRect())
+    }
+
+    private func drawChart(in rect: NSRect) {
+        let gridColor = NSColor(calibratedWhite: 1, alpha: 0.08)
+        for i in 0...3 {
+            let y = rect.minY + rect.height * CGFloat(i) / 3.0
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: rect.minX, y: y))
+            line.line(to: NSPoint(x: rect.maxX, y: y))
+            gridColor.setStroke()
+            line.lineWidth = 0.6
+            line.stroke()
+        }
+
+        guard points.count >= 2, !hasError else {
+            let text = isLoading ? "Loading chart..." : "Chart unavailable"
+            let attrs = attributes(
+                font: NSFont.systemFont(ofSize: 12, weight: .regular),
+                color: NSColor(calibratedWhite: 1, alpha: 0.52),
+                alignment: .center
+            )
+            text.draw(in: NSRect(x: rect.minX, y: rect.midY - 8, width: rect.width, height: 18), withAttributes: attrs)
+            return
+        }
+
+        let values = points.map { $0.price }
+        let minV = values.min() ?? 0
+        let maxV = values.max() ?? 0
+        let range = max(maxV - minV, 0.00000001)
+        let inset: CGFloat = 7
+        let stepX = rect.width / CGFloat(values.count - 1)
+
+        func point(_ i: Int) -> NSPoint {
+            let x = rect.minX + CGFloat(i) * stepX
+            let norm = CGFloat((values[i] - minV) / range)
+            let y = rect.minY + inset + norm * (rect.height - 2 * inset)
+            return NSPoint(x: x, y: y)
+        }
+
+        let isUp = (values.last ?? 0) >= (values.first ?? 0)
+        let lineColor = isUp
+            ? NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 0.98)
+            : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 0.98)
+
+        let fillPath = NSBezierPath()
+        fillPath.move(to: NSPoint(x: rect.minX, y: rect.minY))
+        for i in 0..<values.count {
+            fillPath.line(to: point(i))
+        }
+        fillPath.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+        fillPath.close()
+        if let gradient = NSGradient(
+            starting: lineColor.withAlphaComponent(0.02),
+            ending: lineColor.withAlphaComponent(0.26)
+        ) {
+            gradient.draw(in: fillPath, angle: 90)
+        }
+
+        let linePath = NSBezierPath()
+        linePath.lineJoinStyle = .round
+        linePath.lineCapStyle = .round
+        for i in 0..<values.count {
+            if i == 0 {
+                linePath.move(to: point(i))
+            } else {
+                linePath.line(to: point(i))
+            }
+        }
+        lineColor.setStroke()
+        linePath.lineWidth = 2
+        linePath.stroke()
+
+        let last = point(values.count - 1)
+        let dot = NSBezierPath(ovalIn: NSRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6))
+        lineColor.setFill()
+        dot.fill()
+
+        if let hoveredIndex = hoveredIndex, values.indices.contains(hoveredIndex) {
+            let hovered = point(hoveredIndex)
+
+            let guide = NSBezierPath()
+            guide.move(to: NSPoint(x: hovered.x, y: rect.minY))
+            guide.line(to: NSPoint(x: hovered.x, y: rect.maxY))
+            NSColor(calibratedWhite: 1, alpha: 0.22).setStroke()
+            guide.lineWidth = 1
+            guide.stroke()
+
+            let ring = NSBezierPath(ovalIn: NSRect(x: hovered.x - 4, y: hovered.y - 4, width: 8, height: 8))
+            NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.13, alpha: 0.96).setFill()
+            ring.fill()
+            lineColor.setStroke()
+            ring.lineWidth = 2
+            ring.stroke()
+
+            let tooltip = PriceFormatter.shared.format(values[hoveredIndex])
+            let tooltipAttrs = attributes(
+                font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
+                color: .white,
+                alignment: .center
+            )
+            let textSize = tooltip.size(withAttributes: tooltipAttrs)
+            let tooltipWidth = min(max(textSize.width + 14, 72), rect.width)
+            let tooltipX = min(max(hovered.x - tooltipWidth / 2, rect.minX), rect.maxX - tooltipWidth)
+            let tooltipY = min(hovered.y + 12, rect.maxY - 22)
+            let tooltipRect = NSRect(x: tooltipX, y: tooltipY, width: tooltipWidth, height: 20)
+            let tooltipPath = NSBezierPath(roundedRect: tooltipRect, xRadius: 7, yRadius: 7)
+            NSColor(calibratedRed: 0.05, green: 0.06, blue: 0.09, alpha: 0.9).setFill()
+            tooltipPath.fill()
+            NSColor(calibratedWhite: 1, alpha: 0.16).setStroke()
+            tooltipPath.lineWidth = 1
+            tooltipPath.stroke()
+            tooltip.draw(in: tooltipRect.insetBy(dx: 4, dy: 3), withAttributes: tooltipAttrs)
+        }
+
+        let rangeAttrs = attributes(
+            font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
+            color: NSColor(calibratedWhite: 1, alpha: 0.42),
+            alignment: .right
+        )
+        PriceFormatter.shared.compact(maxV).draw(
+            in: NSRect(x: rect.maxX - 76, y: rect.maxY - 14, width: 76, height: 12),
+            withAttributes: rangeAttrs
+        )
+        PriceFormatter.shared.compact(minV).draw(
+            in: NSRect(x: rect.maxX - 76, y: rect.minY + 2, width: 76, height: 12),
+            withAttributes: rangeAttrs
+        )
     }
 }
 
@@ -583,6 +1034,7 @@ class AnimatedPriceLabel: NSTextField {
 class CryptoRowView: NSView {
     let symbol: String
     let showSparkline: Bool
+    var onClick: ((CryptoRowView) -> Void)?
 
     private let symbolLabel = NSTextField(labelWithString: "")
     private let priceLabel = AnimatedPriceLabel(labelWithString: "Loading…")
@@ -674,6 +1126,10 @@ class CryptoRowView: NSView {
             userInfo: nil
         )
         addTrackingArea(tracking)
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:)))
+        click.numberOfClicksRequired = 1
+        addGestureRecognizer(click)
     }
 
     func setSparkline(_ values: [Double]) {
@@ -743,6 +1199,11 @@ class CryptoRowView: NSView {
         })
     }
 
+    @objc private func handleClick(_ sender: NSClickGestureRecognizer) {
+        guard sender.state == .ended else { return }
+        onClick?(self)
+    }
+
     override func mouseEntered(with event: NSEvent) {
         isHovered = true
         needsDisplay = true
@@ -787,6 +1248,20 @@ class FloatingWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
 
+class ChartPopupWindow: NSWindow {
+    override init(contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing backingStoreType: NSWindow.BackingStoreType, defer flag: Bool) {
+        super.init(contentRect: contentRect, styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
+
+        level = .floating
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+    }
+
+    override var canBecomeKey: Bool { true }
+}
+
 // MARK: - App Delegate
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
@@ -797,6 +1272,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var toggleButton: ToggleButtonView!
     var contentPanel: GlassContentView?
     var containerView: NSView!
+    var chartWindow: ChartPopupWindow?
+    var chartContentView: SevenDayChartContentView?
+    var chartDismissalMonitors: [Any] = []
+    var activeChartSymbol: String?
 
     var transparencyMenu: NSMenu!
     var refreshRateMenu: NSMenu!
@@ -808,9 +1287,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     var latestPrices: [String: PriceData] = [:]
     var sparklineCache: [String: (values: [Double], fetchedAt: Date)] = [:]
+    var chartCache: [String: (points: [ChartPoint], fetchedAt: Date)] = [:]
 
     let toggleButtonSize: CGFloat = 44
     let panelWidth: CGFloat = 220
+    let chartPopupSize = NSSize(width: 300, height: 190)
     let headerHeight: CGFloat = 30
     let padding: CGFloat = 12
 
@@ -850,6 +1331,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        hideChartPopup()
         let frame = floatingWindow.frame
         config.windowX = Double(frame.origin.x)
         config.windowY = Double(frame.origin.y)
@@ -989,7 +1471,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func calculateWindowSize() -> (width: CGFloat, height: CGFloat) {
         if config.isExpanded {
             let contentHeight = headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding
-            return (expandedWidth, max(contentHeight, toggleButtonSize + 10))
+            return (expandedWidth, max(contentHeight + 10, toggleButtonSize + 10))
         } else {
             return (toggleButtonSize + 10, toggleButtonSize + 10)
         }
@@ -1000,7 +1482,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let frame = NSRect(x: config.windowX, y: config.windowY, width: Double(width), height: Double(height))
 
         floatingWindow = FloatingWindow(contentRect: frame, styleMask: [], backing: .buffered, defer: false)
-        floatingWindow.alphaValue = CGFloat(config.transparency)
+        floatingWindow.alphaValue = 1
 
         containerView = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         floatingWindow.contentView = containerView
@@ -1027,6 +1509,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let contentHeight = headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding
 
         contentPanel = GlassContentView(frame: NSRect(x: toggleButtonSize + 10, y: 5, width: panelWidth, height: contentHeight))
+        contentPanel?.backgroundOpacity = CGFloat(config.transparency)
         containerView.addSubview(contentPanel!)
 
         let titleLabel = NSTextField(labelWithString: "PRICES · USDT")
@@ -1057,6 +1540,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 symbol: symbol,
                 showSparkline: config.showSparklines
             )
+            row.onClick = { [weak self] _ in
+                self?.showChartPopup(for: symbol)
+            }
             contentPanel?.addSubview(row)
             cryptoRows[symbol] = row
 
@@ -1068,7 +1554,116 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusLabel()
     }
 
+    private func chartAnchorScreenRect() -> NSRect {
+        if let panel = contentPanel {
+            let panelInWindow = panel.convert(panel.bounds, to: nil)
+            return floatingWindow.convertToScreen(panelInWindow)
+        }
+
+        if let contentView = floatingWindow.contentView {
+            let contentInWindow = contentView.convert(contentView.bounds, to: nil)
+            return floatingWindow.convertToScreen(contentInWindow)
+        }
+
+        return floatingWindow.frame
+    }
+
+    func showChartPopup(for symbol: String) {
+        hideChartPopup()
+        activeChartSymbol = symbol
+
+        let anchor = chartAnchorScreenRect()
+        var origin = NSPoint(
+            x: anchor.maxX + 10,
+            y: anchor.maxY - chartPopupSize.height
+        )
+
+        if let visibleFrame = floatingWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame {
+            if origin.x + chartPopupSize.width > visibleFrame.maxX - 8 {
+                origin.x = anchor.minX - chartPopupSize.width - 10
+            }
+            origin.x = min(max(origin.x, visibleFrame.minX + 8), visibleFrame.maxX - chartPopupSize.width - 8)
+            origin.y = min(max(origin.y, visibleFrame.minY + 8), visibleFrame.maxY - chartPopupSize.height - 8)
+        }
+
+        let frame = NSRect(origin: origin, size: chartPopupSize)
+        let popup = ChartPopupWindow(contentRect: frame, styleMask: [], backing: .buffered, defer: false)
+        popup.alphaValue = 1
+        popup.acceptsMouseMovedEvents = true
+
+        let content = SevenDayChartContentView(
+            frame: NSRect(origin: .zero, size: chartPopupSize),
+            symbol: symbol,
+            latest: latestPrices[symbol]
+        )
+        content.backgroundOpacity = CGFloat(config.transparency)
+        popup.contentView = content
+        content.needsDisplay = true
+        chartWindow = popup
+        chartContentView = content
+
+        popup.displayIfNeeded()
+        popup.orderFront(nil)
+        installChartDismissalMonitors()
+
+        if let cached = chartCache[symbol], Date().timeIntervalSince(cached.fetchedAt) < 600 {
+            content.setPoints(cached.points)
+            return
+        }
+
+        CryptoAPI.shared.fetchSevenDayChart(for: symbol) { [weak self, weak content] points in
+            guard let self = self, self.activeChartSymbol == symbol else { return }
+            if !points.isEmpty {
+                self.chartCache[symbol] = (points, Date())
+            }
+            content?.setSummary(self.latestPrices[symbol])
+            content?.setPoints(points)
+        }
+    }
+
+    func hideChartPopup() {
+        removeChartDismissalMonitors()
+        chartWindow?.orderOut(nil)
+        chartWindow = nil
+        chartContentView = nil
+        activeChartSymbol = nil
+    }
+
+    private func installChartDismissalMonitors() {
+        removeChartDismissalMonitors()
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.chartWindow != nil else { return }
+
+            var monitors: [Any] = []
+            if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+                self?.hideChartPopup()
+                return nil
+            }) {
+                monitors.append(local)
+            }
+
+            if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.hideChartPopup()
+                }
+            }) {
+                monitors.append(global)
+            }
+
+            self.chartDismissalMonitors = monitors
+        }
+    }
+
+    private func removeChartDismissalMonitors() {
+        for monitor in chartDismissalMonitors {
+            NSEvent.removeMonitor(monitor)
+        }
+        chartDismissalMonitors.removeAll()
+    }
+
     func toggleExpanded() {
+        hideChartPopup()
         config.isExpanded.toggle()
         config.save()
 
@@ -1100,6 +1695,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func rebuildWindow() {
         guard config.isExpanded else { return }
+        hideChartPopup()
 
         let (width, height) = calculateWindowSize()
         var frame = floatingWindow.frame
@@ -1137,6 +1733,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.latestPrices = prices
             for (symbol, data) in prices {
                 self.cryptoRows[symbol]?.update(price: data.price, change: data.change24h, hasError: data.hasError)
+            }
+            if let activeSymbol = self.activeChartSymbol {
+                self.chartContentView?.setSummary(prices[activeSymbol])
             }
             self.updateMenuBarTitle()
             self.updateAccent()
@@ -1206,6 +1805,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
     @objc func toggleWindowVisibility() {
         if floatingWindow.isVisible {
+            hideChartPopup()
             floatingWindow.orderOut(nil)
         } else {
             floatingWindow.makeKeyAndOrderFront(nil)
@@ -1218,9 +1818,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func setTransparency(_ sender: NSMenuItem) {
         let level = Double(sender.tag) / 100.0
-        floatingWindow.alphaValue = CGFloat(level)
         config.transparency = level
         config.save()
+        floatingWindow.alphaValue = 1
+        contentPanel?.backgroundOpacity = CGFloat(level)
+        chartContentView?.backgroundOpacity = CGFloat(level)
 
         for item in transparencyMenu.items {
             item.state = item.tag == sender.tag ? .on : .off
@@ -1281,8 +1883,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func removeCrypto(_ sender: NSMenuItem) {
         guard let symbol = sender.representedObject as? String else { return }
+        if activeChartSymbol == symbol {
+            hideChartPopup()
+        }
         config.cryptos.removeAll { $0 == symbol }
         sparklineCache[symbol] = nil
+        chartCache[symbol] = nil
         if config.menuBarSymbol == symbol {
             config.menuBarSymbol = nil
         }
@@ -1294,6 +1900,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func resetDefaults() {
+        hideChartPopup()
         config.cryptos = AppConfig.default.cryptos
         config.refreshRate = AppConfig.default.refreshRate
         sanitizeMenuBarSymbol()
