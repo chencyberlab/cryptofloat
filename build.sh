@@ -6,6 +6,8 @@ cd "$SCRIPT_DIR"
 
 APP_NAME="CryptoFloat"
 SWIFT_FILE="CryptoFloat.swift"
+ICON_GENERATOR="generate_icon.swift"
+ICON_FILE="AppIcon.icns"
 
 echo "🔨 Building $APP_NAME..."
 
@@ -35,6 +37,20 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# Generate app icon if the icon source is present
+if [ -f "$ICON_GENERATOR" ]; then
+    echo "   Generating app icon..."
+    swift "$ICON_GENERATOR"
+    if [ $? -ne 0 ]; then
+        echo "❌ Icon generation failed!"
+        exit 1
+    fi
+fi
+
+if [ -f "$ICON_FILE" ]; then
+    cp "$ICON_FILE" "$APP_BUNDLE/Contents/Resources/$ICON_FILE"
+fi
+
 # Create Info.plist
 cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -45,6 +61,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <string>CryptoFloat</string>
     <key>CFBundleDisplayName</key>
     <string>CryptoFloat</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.cryptofloat.app</string>
     <key>CFBundleVersion</key>
