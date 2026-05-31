@@ -12,6 +12,7 @@ A native macOS menu bar app for tracking cryptocurrency prices in a floating, dr
 - **Dropdown price panel** - expands from the floating widget and stays always on top.
 - **7-day chart popup** - click any crypto row to open a small chart popup; click anywhere to hide it.
 - **Interactive chart hover** - move over the 7-day chart to see historical candle prices and times.
+- **Optional network fees** - show ETH slow/standard/fast gas and BTC slow/standard/fast fee estimates below the price panel.
 - **24h sparklines** - optional mini trend line on each row.
 - **Menu-bar ticker** - optionally show one tracked coin's price in the macOS menu bar.
 - **Background-only transparency** - the widget background fades from 50% to 100%, while text and charts stay readable.
@@ -35,6 +36,13 @@ CryptoFloat can use multiple public market-data providers:
 Current price and 24h change use the selected provider. Row sparklines and 7-day chart popups also switch with the selected provider.
 
 CoinGecko has broad coverage but public endpoints are IP-rate-limited. Unknown or ambiguous symbols may not resolve unless they are in CryptoFloat's built-in CoinGecko symbol map.
+
+Network fee estimates use public endpoints:
+
+- Ethereum gas uses `eth_feeHistory` through public Ethereum JSON-RPC endpoints.
+- Bitcoin fee rates use a conservative multi-source estimate from mempool.space, Blockstream, Blockchair, BlockCypher, and fresh Bitcoiner.live data when available.
+- ETH USD estimates assume a standard 21,000 gas ETH transfer.
+- BTC USD estimates assume a typical 140 vbyte transaction.
 
 ## Requirements
 
@@ -98,6 +106,7 @@ cp -r CryptoFloat.app /Applications/
 | Transparency | Adjust background opacity from 50% to 100% |
 | Refresh Rate | Choose update interval from 5 seconds to 5 minutes |
 | Show Sparklines | Toggle row mini charts |
+| Show Network Fees | Toggle ETH/BTC fee estimates below the price panel |
 | Menu Bar Display | Show a coin's price in the macOS menu bar, or only the Bitcoin symbol |
 | Add Cryptocurrency... | Add a tracked symbol paired with USDT |
 | Remove Cryptocurrency | Remove a tracked symbol |
@@ -159,6 +168,7 @@ Example:
   "isExpanded": true,
   "menuBarSymbol": null,
   "refreshRate": 30,
+  "showNetworkFees": false,
   "showSparklines": true,
   "theme": "cryptoFloat",
   "transparency": 0.85,

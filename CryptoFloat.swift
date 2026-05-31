@@ -210,6 +210,7 @@ struct AppConfig: Codable {
     var floatingWidgetMode: FloatingWidgetMode
     var theme: AppThemeName
     var dataProvider: DataProvider
+    var showNetworkFees: Bool
 
     static let `default` = AppConfig(
         cryptos: ["BTC", "ETH", "SOL"],
@@ -222,7 +223,8 @@ struct AppConfig: Codable {
         menuBarSymbol: nil,
         floatingWidgetMode: .bitcoin,
         theme: .cryptoFloat,
-        dataProvider: .kuCoin
+        dataProvider: .kuCoin,
+        showNetworkFees: false
     )
 
     static let configPath = FileManager.default.homeDirectoryForCurrentUser
@@ -249,7 +251,7 @@ struct AppConfig: Codable {
 // config files (and future schema changes) working seamlessly.
 extension AppConfig {
     enum CodingKeys: String, CodingKey {
-        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode, theme, dataProvider
+        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode, theme, dataProvider, showNetworkFees
     }
 
     init(from decoder: Decoder) throws {
@@ -266,6 +268,7 @@ extension AppConfig {
         floatingWidgetMode = (try? c.decode(FloatingWidgetMode.self, forKey: .floatingWidgetMode)) ?? d.floatingWidgetMode
         theme          = (try? c.decode(AppThemeName.self, forKey: .theme)) ?? d.theme
         dataProvider   = (try? c.decode(DataProvider.self, forKey: .dataProvider)) ?? d.dataProvider
+        showNetworkFees = (try? c.decode(Bool.self, forKey: .showNetworkFees)) ?? d.showNetworkFees
     }
 }
 
@@ -334,6 +337,21 @@ struct PriceData {
 struct ChartPoint {
     let time: TimeInterval
     let price: Double
+}
+
+struct NetworkFeeTier {
+    let label: String
+    let rate: Double
+    let unit: String
+    let usdValue: Double?
+    let eta: String
+}
+
+struct NetworkFeeData {
+    let eth: [NetworkFeeTier]
+    let btc: [NetworkFeeTier]
+    let updatedAt: Date
+    let hasError: Bool
 }
 
 // MARK: - Market Data API Manager
@@ -770,6 +788,323 @@ class CryptoAPI {
             }
 
             completion(points)
+        }
+    }
+}
+
+// MARK: - Network Fee API Manager
+class NetworkFeeAPI {
+    static let shared = NetworkFeeAPI()
+
+    private let ethereumRPCURLs = [
+        URL(string: "https://eth-mainnet.g.alchemy.com/public")!,
+        URL(string: "https://cloudflare-eth.com")!
+    ]
+    private let bitcoinFeeURL = URL(string: "https://mempool.space/api/v1/fees/recommended")!
+    private let bitcoinMempoolBlocksURL = URL(string: "https://mempool.space/api/v1/fees/mempool-blocks")!
+    private let blockstreamFeeURL = URL(string: "https://blockstream.info/api/fee-estimates")!
+    private let blockchairBitcoinStatsURL = URL(string: "https://api.blockchair.com/bitcoin/stats")!
+    private let blockcypherBitcoinURL = URL(string: "https://api.blockcypher.com/v1/btc/main")!
+    private let bitcoinerLiveFeeURL = URL(string: "https://bitcoiner.live/api/fees/estimates/latest?confidence=0.8")!
+
+    private let ethTransferGas: Double = 21000
+    private let btcTypicalVBytes: Double = 140
+
+    private struct BitcoinFeeEstimate {
+        let source: String
+        let slow: Double?
+        let standard: Double?
+        let fast: Double?
+    }
+
+    private func requestGET(_ url: URL, completion: @escaping (Data?) -> Void) {
+        var request = URLRequest(url: url)
+        request.setValue("CryptoFloat/1.1", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error = error {
+                print("Network fee GET error: \(error.localizedDescription)")
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            DispatchQueue.main.async { completion(data) }
+        }.resume()
+    }
+
+    private func requestJSONRPC(urls: [URL], body: [String: Any], completion: @escaping (Data?) -> Void) {
+        guard let url = urls.first else {
+            DispatchQueue.main.async { completion(nil) }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("CryptoFloat/1.1", forHTTPHeaderField: "User-Agent")
+        request.timeoutInterval = 10
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if error != nil || data == nil {
+                self.requestJSONRPC(urls: Array(urls.dropFirst()), body: body, completion: completion)
+                return
+            }
+            DispatchQueue.main.async { completion(data) }
+        }.resume()
+    }
+
+    private func hexToDouble(_ hex: String) -> Double? {
+        let cleaned = hex.hasPrefix("0x") ? String(hex.dropFirst(2)) : hex
+        return Double(UInt64(cleaned, radix: 16) ?? 0)
+    }
+
+    private func averageRewards(_ rewards: [[String]], percentileIndex: Int) -> Double {
+        let values = rewards.compactMap { row -> Double? in
+            guard row.indices.contains(percentileIndex) else { return nil }
+            return hexToDouble(row[percentileIndex])
+        }
+        guard !values.isEmpty else { return 0 }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    private func numberValue(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = value as? String {
+            return Double(string)
+        }
+        return nil
+    }
+
+    private func bitcoinTiers(
+        slow: Double?,
+        standard: Double?,
+        fast: Double?,
+        btcPrice: Double?,
+        etas: (String, String, String)
+    ) -> [NetworkFeeTier] {
+        let raw: [(String, Double?, String)] = [
+            ("Slow", slow, etas.0),
+            ("Standard", standard, etas.1),
+            ("Fast", fast, etas.2)
+        ]
+
+        return raw.compactMap { label, rate, eta -> NetworkFeeTier? in
+            guard let rate = rate, rate > 0 else { return nil }
+            let sats = rate * self.btcTypicalVBytes
+            let usd = btcPrice.map { sats / 100_000_000 * $0 }
+            return NetworkFeeTier(label: label, rate: rate, unit: "sat/vB", usdValue: usd, eta: eta)
+        }
+    }
+
+    private func highestFeeRate(_ values: [Double?]) -> Double? {
+        let valid = values.compactMap { $0 }.filter { $0 > 0 && $0 < 1_000 }
+        return valid.max()
+    }
+
+    private func conservativeBitcoinEstimate(from estimates: [BitcoinFeeEstimate]) -> BitcoinFeeEstimate? {
+        guard !estimates.isEmpty else { return nil }
+
+        let slow = highestFeeRate(estimates.map(\.slow))
+        let standardBase = highestFeeRate(estimates.map(\.standard))
+        let fastBase = highestFeeRate(estimates.map(\.fast))
+
+        let standard = [standardBase, slow].compactMap { $0 }.max()
+        let fast = [fastBase, standard].compactMap { $0 }.max()
+        let sources = estimates.map(\.source).joined(separator: ", ")
+
+        return BitcoinFeeEstimate(source: sources, slow: slow, standard: standard, fast: fast)
+    }
+
+    private func estimateFromMempoolBlocks(_ data: Data?) -> BitcoinFeeEstimate? {
+        guard let data = data,
+              let blocks = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let firstBlock = blocks.first else {
+            return nil
+        }
+
+        let feeRange = (firstBlock["feeRange"] as? [Any])?.compactMap { numberValue($0) } ?? []
+        let firstMedian = numberValue(firstBlock["medianFee"])
+        let thirdBlockMedian = blocks.dropFirst(2).first.flatMap { numberValue($0["medianFee"]) }
+        let lastBlockMedian = blocks.last.flatMap { numberValue($0["medianFee"]) }
+        let upperNormalFee = feeRange.count >= 2 ? feeRange[feeRange.count - 2] : feeRange.last
+
+        let slow = thirdBlockMedian ?? lastBlockMedian ?? feeRange.first ?? firstMedian
+        let standard = feeRange.indices.contains(4) ? max(firstMedian ?? 0, feeRange[4]) : firstMedian
+        let fast = upperNormalFee ?? firstMedian
+
+        return BitcoinFeeEstimate(source: "mempool blocks", slow: slow, standard: standard, fast: fast)
+    }
+
+    private func estimateFromMempoolRecommended(_ data: Data?) -> BitcoinFeeEstimate? {
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let slow = numberValue(json["hourFee"]) ?? numberValue(json["economyFee"])
+        let standard = numberValue(json["halfHourFee"])
+        let fast = numberValue(json["fastestFee"])
+        return BitcoinFeeEstimate(source: "mempool recommended", slow: slow, standard: standard, fast: fast)
+    }
+
+    private func estimateFromBlockstream(_ data: Data?) -> BitcoinFeeEstimate? {
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let slow = numberValue(json["6"]) ?? numberValue(json["12"]) ?? numberValue(json["24"])
+        let standard = numberValue(json["3"]) ?? numberValue(json["4"]) ?? numberValue(json["6"])
+        let fast = numberValue(json["1"]) ?? numberValue(json["2"])
+        return BitcoinFeeEstimate(source: "Blockstream", slow: slow, standard: standard, fast: fast)
+    }
+
+    private func estimateFromBlockchair(_ data: Data?) -> BitcoinFeeEstimate? {
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stats = json["data"] as? [String: Any],
+              let suggested = numberValue(stats["suggested_transaction_fee_per_byte_sat"]) else {
+            return nil
+        }
+
+        return BitcoinFeeEstimate(source: "Blockchair", slow: suggested, standard: suggested, fast: suggested)
+    }
+
+    private func estimateFromBlockcypher(_ data: Data?) -> BitcoinFeeEstimate? {
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        let slow = numberValue(json["low_fee_per_kb"]).map { $0 / 1000 }
+        let standard = numberValue(json["medium_fee_per_kb"]).map { $0 / 1000 }
+        let fast = numberValue(json["high_fee_per_kb"]).map { $0 / 1000 }
+        return BitcoinFeeEstimate(source: "BlockCypher", slow: slow, standard: standard, fast: fast)
+    }
+
+    private func estimateFromBitcoinerLive(_ data: Data?) -> BitcoinFeeEstimate? {
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let timestamp = numberValue(json["timestamp"]),
+              Date().timeIntervalSince1970 - timestamp < 6 * 60 * 60,
+              let estimates = json["estimates"] as? [String: Any] else {
+            return nil
+        }
+
+        func rate(_ minutes: String) -> Double? {
+            guard let estimate = estimates[minutes] as? [String: Any] else { return nil }
+            return numberValue(estimate["sat_per_vbyte"])
+        }
+
+        return BitcoinFeeEstimate(
+            source: "Bitcoiner.live",
+            slow: rate("120") ?? rate("180") ?? rate("360"),
+            standard: rate("60"),
+            fast: rate("30")
+        )
+    }
+
+    private func fetchEthereumFees(ethPrice: Double?, completion: @escaping ([NetworkFeeTier]) -> Void) {
+        let body: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": "eth_feeHistory",
+            "params": ["0x6", "latest", [10, 50, 90]],
+            "id": 1
+        ]
+
+        requestJSONRPC(urls: ethereumRPCURLs, body: body) { data in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let result = json["result"] as? [String: Any],
+                  let baseFees = result["baseFeePerGas"] as? [String],
+                  let nextBaseFeeWei = baseFees.last.flatMap({ self.hexToDouble($0) }),
+                  let rewards = result["reward"] as? [[String]] else {
+                completion([])
+                return
+            }
+
+            let tiers: [(String, Int, String)] = [
+                ("Slow", 0, "1-2m"),
+                ("Standard", 1, "~30s"),
+                ("Fast", 2, "~15s")
+            ]
+
+            let feeTiers = tiers.map { label, index, eta -> NetworkFeeTier in
+                let priorityWei = self.averageRewards(rewards, percentileIndex: index)
+                let gwei = (nextBaseFeeWei + priorityWei) / 1_000_000_000
+                let usd = ethPrice.map { gwei * self.ethTransferGas / 1_000_000_000 * $0 }
+                return NetworkFeeTier(label: label, rate: gwei, unit: "gwei", usdValue: usd, eta: eta)
+            }
+
+            completion(feeTiers)
+        }
+    }
+
+    private func fetchBitcoinFees(btcPrice: Double?, completion: @escaping ([NetworkFeeTier]) -> Void) {
+        let group = DispatchGroup()
+        var estimates: [BitcoinFeeEstimate] = []
+
+        func fetch(_ url: URL, parse: @escaping (Data?) -> BitcoinFeeEstimate?) {
+            group.enter()
+            requestGET(url) { data in
+                if let estimate = parse(data) {
+                    estimates.append(estimate)
+                }
+                group.leave()
+            }
+        }
+
+        fetch(bitcoinMempoolBlocksURL, parse: estimateFromMempoolBlocks)
+        fetch(bitcoinFeeURL, parse: estimateFromMempoolRecommended)
+        fetch(blockstreamFeeURL, parse: estimateFromBlockstream)
+        fetch(blockchairBitcoinStatsURL, parse: estimateFromBlockchair)
+        fetch(blockcypherBitcoinURL, parse: estimateFromBlockcypher)
+        fetch(bitcoinerLiveFeeURL, parse: estimateFromBitcoinerLive)
+
+        group.notify(queue: .main) {
+            guard let estimate = self.conservativeBitcoinEstimate(from: estimates) else {
+                completion([])
+                return
+            }
+
+            let tiers = self.bitcoinTiers(
+                slow: estimate.slow,
+                standard: estimate.standard,
+                fast: estimate.fast,
+                btcPrice: btcPrice,
+                etas: ("~30-60m", "~10-30m", "next block")
+            )
+            completion(tiers)
+        }
+    }
+
+    func fetchFees(ethPrice: Double?, btcPrice: Double?, completion: @escaping (NetworkFeeData) -> Void) {
+        let group = DispatchGroup()
+        var ethFees: [NetworkFeeTier] = []
+        var btcFees: [NetworkFeeTier] = []
+
+        group.enter()
+        fetchEthereumFees(ethPrice: ethPrice) { fees in
+            ethFees = fees
+            group.leave()
+        }
+
+        group.enter()
+        fetchBitcoinFees(btcPrice: btcPrice) { fees in
+            btcFees = fees
+            group.leave()
+        }
+
+        group.notify(queue: .main) {
+            completion(NetworkFeeData(
+                eth: ethFees,
+                btc: btcFees,
+                updatedAt: Date(),
+                hasError: ethFees.isEmpty && btcFees.isEmpty
+            ))
         }
     }
 }
@@ -1690,6 +2025,295 @@ class SevenDayChartContentView: NSView {
     }
 }
 
+// MARK: - Network Fees View
+class NetworkFeesView: NSView {
+    private var data: NetworkFeeData?
+    private var isLoading = true
+    private var changedTierKeys: Set<String> = []
+    private var pulseAlpha: CGFloat = 0
+    private var pulseTimer: Timer?
+
+    deinit {
+        pulseTimer?.invalidate()
+    }
+
+    func setLoading() {
+        isLoading = true
+        needsDisplay = true
+    }
+
+    func setData(_ data: NetworkFeeData) {
+        let changedKeys = changedTierKeys(from: self.data, to: data)
+        self.data = data
+        isLoading = false
+
+        if changedKeys.isEmpty {
+            changedTierKeys.removeAll()
+            pulseAlpha = 0
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+            needsDisplay = true
+        } else {
+            startPulse(for: changedKeys)
+        }
+    }
+
+    private func attributes(font: NSFont, color: NSColor, alignment: NSTextAlignment = .left) -> [NSAttributedString.Key: Any] {
+        let style = NSMutableParagraphStyle()
+        style.alignment = alignment
+        return [
+            .font: font,
+            .foregroundColor: color,
+            .paragraphStyle: style
+        ]
+    }
+
+    private func rateParts(_ tier: NetworkFeeTier) -> (amount: String, unit: String) {
+        let amount: String
+        if tier.unit == "gwei" {
+            amount = String(format: "%.2f", tier.rate)
+        } else if tier.unit == "sat/vB", tier.rate < 10 {
+            amount = String(format: "%.1f", tier.rate)
+        } else {
+            amount = String(format: "%.0f", tier.rate)
+        }
+
+        return (amount, tier.unit == "gwei" ? "GWEI" : tier.unit)
+    }
+
+    private func tierTitle(for index: Int) -> String {
+        switch index {
+        case 0: return "LOW"
+        case 1: return "MEDIUM"
+        default: return "HIGH"
+        }
+    }
+
+    private func tierColor(for index: Int, theme: AppTheme) -> NSColor {
+        switch index {
+        case 0: return theme.positive.color()
+        case 1: return theme.warning.color()
+        default: return theme.negative.color()
+        }
+    }
+
+    private func tierSignature(_ tier: NetworkFeeTier) -> String {
+        let parts = rateParts(tier)
+        let usd = tier.usdValue.map { PriceFormatter.shared.compact($0) } ?? "--"
+        return "\(parts.amount)|\(parts.unit)|\(usd)|\(tier.eta)"
+    }
+
+    private func changedTierKeys(from oldData: NetworkFeeData?, to newData: NetworkFeeData) -> Set<String> {
+        guard let oldData = oldData else { return [] }
+
+        var keys: Set<String> = []
+        for (prefix, oldTiers, newTiers) in [
+            ("eth", oldData.eth, newData.eth),
+            ("btc", oldData.btc, newData.btc)
+        ] {
+            for index in 0..<min(newTiers.count, 3) {
+                let key = "\(prefix)-\(index)"
+                guard oldTiers.indices.contains(index) else {
+                    keys.insert(key)
+                    continue
+                }
+                if tierSignature(oldTiers[index]) != tierSignature(newTiers[index]) {
+                    keys.insert(key)
+                }
+            }
+        }
+        return keys
+    }
+
+    private func startPulse(for keys: Set<String>) {
+        changedTierKeys = keys
+        pulseAlpha = 1
+        pulseTimer?.invalidate()
+        needsDisplay = true
+
+        let started = Date()
+        let duration: TimeInterval = 0.9
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+
+            let elapsed = Date().timeIntervalSince(started)
+            if elapsed >= duration {
+                self.pulseAlpha = 0
+                self.changedTierKeys.removeAll()
+                timer.invalidate()
+                self.pulseTimer = nil
+            } else {
+                self.pulseAlpha = CGFloat(1 - (elapsed / duration))
+            }
+            self.needsDisplay = true
+        }
+
+        pulseTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func drawUnavailable(_ text: String, in rect: NSRect) {
+        let theme = ThemeCatalog.current
+        text.draw(
+            in: rect,
+            withAttributes: attributes(
+                font: NSFont.systemFont(ofSize: 11, weight: .regular),
+                color: theme.foreground.color(alpha: 0.48),
+                alignment: .center
+            )
+        )
+    }
+
+    private func drawTierCard(_ tier: NetworkFeeTier, index: Int, key: String, rect: NSRect) {
+        let theme = ThemeCatalog.current
+        let accent = tierColor(for: index, theme: theme)
+        let isChanged = changedTierKeys.contains(key)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
+        let baseAlpha: CGFloat = isChanged ? 0.035 + (0.08 * pulseAlpha) : 0.035
+        theme.foreground.color(alpha: baseAlpha).setFill()
+        path.fill()
+        accent.withAlphaComponent(isChanged ? 0.38 + (0.42 * pulseAlpha) : 0.38).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        let dot = NSBezierPath(ovalIn: NSRect(x: rect.minX + 9, y: rect.maxY - 18, width: 6, height: 6))
+        accent.setFill()
+        dot.fill()
+
+        tierTitle(for: index).draw(
+            in: NSRect(x: rect.minX + 19, y: rect.maxY - 21, width: rect.width - 26, height: 12),
+            withAttributes: attributes(
+                font: NSFont.systemFont(ofSize: 8.5, weight: .bold),
+                color: accent,
+                alignment: .left
+            )
+        )
+
+        let parts = rateParts(tier)
+        parts.amount.draw(
+            in: NSRect(x: rect.minX + 8, y: rect.maxY - 47, width: rect.width - 16, height: 20),
+            withAttributes: attributes(
+                font: NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .medium),
+                color: isChanged
+                    ? theme.foreground.color(alpha: 0.97).blended(withFraction: pulseAlpha * 0.45, of: accent) ?? theme.foreground.color(alpha: 0.97)
+                    : theme.foreground.color(alpha: 0.97),
+                alignment: .center
+            )
+        )
+        parts.unit.draw(
+            in: NSRect(x: rect.minX + 6, y: rect.maxY - 59, width: rect.width - 12, height: 10),
+            withAttributes: attributes(
+                font: NSFont.systemFont(ofSize: 8.5, weight: .semibold),
+                color: theme.foreground.color(alpha: 0.56),
+                alignment: .center
+            )
+        )
+
+        let usdText = tier.usdValue.map { PriceFormatter.shared.compact($0) } ?? "--"
+        usdText.draw(
+            in: NSRect(x: rect.minX + 6, y: rect.minY + 18, width: rect.width - 12, height: 11),
+            withAttributes: attributes(
+                font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
+                color: theme.foreground.color(alpha: 0.72),
+                alignment: .center
+            )
+        )
+        tier.eta.draw(
+            in: NSRect(x: rect.minX + 6, y: rect.minY + 5, width: rect.width - 12, height: 10),
+            withAttributes: attributes(
+                font: NSFont.systemFont(ofSize: 8.5, weight: .regular),
+                color: theme.foreground.color(alpha: 0.42),
+                alignment: .center
+            )
+        )
+    }
+
+    private func drawNetworkSection(title: String, keyPrefix: String, tiers: [NetworkFeeTier], titleY: CGFloat, cardY: CGFloat) {
+        let theme = ThemeCatalog.current
+        let sectionAttrs = attributes(
+            font: NSFont.systemFont(ofSize: 10.5, weight: .bold),
+            color: theme.foreground.color(alpha: 0.86)
+        )
+
+        title.draw(in: NSRect(x: 14, y: titleY, width: bounds.width - 28, height: 14), withAttributes: sectionAttrs)
+
+        let cardHeight: CGFloat = 90
+        let gap: CGFloat = 8
+        let columns = min(max(tiers.count, 1), 3)
+        let available = bounds.width - 28
+        let cardWidth = (available - (CGFloat(columns - 1) * gap)) / CGFloat(columns)
+
+        guard !tiers.isEmpty else {
+            drawUnavailable("Unavailable", in: NSRect(x: 14, y: cardY, width: available, height: cardHeight))
+            return
+        }
+
+        for (index, tier) in tiers.prefix(3).enumerated() {
+            let x = 14 + CGFloat(index) * (cardWidth + gap)
+            drawTierCard(tier, index: index, key: "\(keyPrefix)-\(index)", rect: NSRect(x: x, y: cardY, width: cardWidth, height: cardHeight))
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let theme = ThemeCatalog.current
+        let line = NSBezierPath()
+        line.move(to: NSPoint(x: 12, y: bounds.height - 1))
+        line.line(to: NSPoint(x: bounds.width - 12, y: bounds.height - 1))
+        theme.foreground.color(alpha: 0.08).setStroke()
+        line.lineWidth = 0.6
+        line.stroke()
+
+        let titleAttrs = attributes(
+            font: NSFont.systemFont(ofSize: 10, weight: .bold),
+            color: theme.accent.color(alpha: 0.84)
+        )
+        "NETWORK FEES".draw(at: NSPoint(x: 14, y: bounds.height - 22), withAttributes: titleAttrs)
+
+        if isLoading, data != nil {
+            "UPDATING".draw(
+                in: NSRect(x: bounds.width - 78, y: bounds.height - 22, width: 64, height: 12),
+                withAttributes: attributes(
+                    font: NSFont.systemFont(ofSize: 8, weight: .bold),
+                    color: theme.accent.color(alpha: 0.55),
+                    alignment: .right
+                )
+            )
+        }
+
+        if isLoading, data == nil {
+            "Loading fees...".draw(
+                in: NSRect(x: 14, y: bounds.height - 56, width: bounds.width - 28, height: 18),
+                withAttributes: attributes(
+                    font: NSFont.systemFont(ofSize: 12, weight: .regular),
+                    color: theme.foreground.color(alpha: 0.55),
+                    alignment: .center
+                )
+            )
+            return
+        }
+
+        guard let data = data, !data.hasError else {
+            "Fee data unavailable".draw(
+                in: NSRect(x: 14, y: bounds.height - 56, width: bounds.width - 28, height: 18),
+                withAttributes: attributes(
+                    font: NSFont.systemFont(ofSize: 12, weight: .regular),
+                    color: theme.negative.color(alpha: 0.76),
+                    alignment: .center
+                )
+            )
+            return
+        }
+
+        drawNetworkSection(title: "ETH GAS", keyPrefix: "eth", tiers: data.eth, titleY: bounds.height - 48, cardY: bounds.height - 146)
+        drawNetworkSection(title: "BTC FEES", keyPrefix: "btc", tiers: data.btc, titleY: bounds.height - 170, cardY: 14)
+    }
+}
+
 // MARK: - Animated Price Label
 class AnimatedPriceLabel: NSTextField {
     override init(frame: NSRect) {
@@ -2019,6 +2643,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var toggleButton: ToggleButtonView?
     var marqueeWidget: MarqueeWidgetView?
     var contentPanel: GlassContentView?
+    var networkFeesView: NetworkFeesView?
     var containerView: NSView!
     var chartWindow: ChartPopupWindow?
     var chartContentView: SevenDayChartContentView?
@@ -2034,6 +2659,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var dataProviderMenu: NSMenu!
     var expandCollapseItem: NSMenuItem!
     var sparklineToggleItem: NSMenuItem!
+    var networkFeesToggleItem: NSMenuItem!
     var updatedLabel: NSTextField?
 
     var latestPrices: [String: PriceData] = [:]
@@ -2045,6 +2671,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let panelWidth: CGFloat = 220
     let chartPopupSize = NSSize(width: 300, height: 190)
     let headerHeight: CGFloat = 30
+    let networkFeesHeight: CGFloat = 282
     let padding: CGFloat = 12
 
     private let timeFormatter: DateFormatter = {
@@ -2068,7 +2695,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     var panelContentHeight: CGFloat {
-        return headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding
+        let feesHeight = config.showNetworkFees ? networkFeesHeight : 0
+        return headerHeight + (rowHeight * CGFloat(config.cryptos.count)) + padding + feesHeight
     }
 
     var floatingWidgetWidth: CGFloat {
@@ -2076,7 +2704,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     var currentPanelWidth: CGFloat {
-        return config.floatingWidgetMode == .marquee ? marqueeWidgetWidth : panelWidth
+        let baseWidth = config.floatingWidgetMode == .marquee ? marqueeWidgetWidth : panelWidth
+        return config.showNetworkFees ? max(baseWidth, marqueeWidgetWidth) : baseWidth
     }
 
     var expandedWidth: CGFloat {
@@ -2190,6 +2819,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         sparklineToggleItem.target = self
         sparklineToggleItem.state = config.showSparklines ? .on : .off
         menu.addItem(sparklineToggleItem)
+
+        // Network fee toggle
+        networkFeesToggleItem = NSMenuItem(title: "Show Network Fees", action: #selector(toggleNetworkFees(_:)), keyEquivalent: "")
+        networkFeesToggleItem.target = self
+        networkFeesToggleItem.state = config.showNetworkFees ? .on : .off
+        menu.addItem(networkFeesToggleItem)
 
         // Menu Bar Display submenu
         menuBarMenu = NSMenu()
@@ -2396,6 +3031,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentPanel?.removeFromSuperview()
         cryptoRows.removeAll()
         updatedLabel = nil
+        networkFeesView = nil
 
         guard config.isExpanded else { return }
 
@@ -2449,6 +3085,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             if let cached = sparklineCache[symbol]?.values {
                 row.setSparkline(cached)
             }
+        }
+
+        if config.showNetworkFees {
+            let feeView = NetworkFeesView(frame: NSRect(x: 0, y: 0, width: panelW, height: networkFeesHeight))
+            feeView.setLoading()
+            contentPanel?.addSubview(feeView)
+            networkFeesView = feeView
         }
 
         updateStatusLabel()
@@ -2655,6 +3298,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.updateStatusLabel()
             if self.config.isExpanded {
                 self.refreshSparklines()
+                self.refreshNetworkFees()
             }
         }
     }
@@ -2676,6 +3320,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self.sparklineCache[symbol] = (values, Date())
                     self.cryptoRows[symbol]?.setSparkline(values)
                 }
+            }
+        }
+    }
+
+    func refreshNetworkFees() {
+        guard config.isExpanded, config.showNetworkFees else { return }
+        networkFeesView?.setLoading()
+
+        let existingETH = latestPrices["ETH"].flatMap { data -> Double? in
+            (!data.hasError && data.price > 0) ? data.price : nil
+        }
+        let existingBTC = latestPrices["BTC"].flatMap { data -> Double? in
+            (!data.hasError && data.price > 0) ? data.price : nil
+        }
+
+        if existingETH != nil && existingBTC != nil {
+            NetworkFeeAPI.shared.fetchFees(ethPrice: existingETH, btcPrice: existingBTC) { [weak self] data in
+                self?.networkFeesView?.setData(data)
+            }
+            return
+        }
+
+        CryptoAPI.shared.fetchAllPrices(for: ["ETH", "BTC"], provider: config.dataProvider) { [weak self] prices in
+            guard let self = self else { return }
+            let ethPrice = existingETH ?? prices["ETH"].flatMap { (!$0.hasError && $0.price > 0) ? $0.price : nil }
+            let btcPrice = existingBTC ?? prices["BTC"].flatMap { (!$0.hasError && $0.price > 0) ? $0.price : nil }
+
+            NetworkFeeAPI.shared.fetchFees(ethPrice: ethPrice, btcPrice: btcPrice) { [weak self] data in
+                self?.networkFeesView?.setData(data)
             }
         }
     }
@@ -2842,6 +3515,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc func toggleNetworkFees(_ sender: NSMenuItem) {
+        config.showNetworkFees.toggle()
+        config.save()
+        networkFeesToggleItem.state = config.showNetworkFees ? .on : .off
+        rebuildWindow()
+        if config.showNetworkFees {
+            refreshNetworkFees()
+        }
+    }
+
     @objc func setMenuBarSymbol(_ sender: NSMenuItem) {
         config.menuBarSymbol = sender.representedObject as? String
         config.save()
@@ -2906,6 +3589,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.floatingWidgetMode = AppConfig.default.floatingWidgetMode
         config.theme = AppConfig.default.theme
         config.dataProvider = AppConfig.default.dataProvider
+        config.showNetworkFees = AppConfig.default.showNetworkFees
         ThemeCatalog.current = ThemeCatalog.theme(for: config.theme)
         sanitizeMenuBarSymbol()
         config.save()
@@ -2932,6 +3616,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for item in refreshRateMenu.items {
             item.state = item.tag == config.refreshRate ? .on : .off
         }
+        networkFeesToggleItem.state = config.showNetworkFees ? .on : .off
     }
 
     @objc func quitApp() {
