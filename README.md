@@ -16,6 +16,7 @@ A native macOS menu bar app for tracking cryptocurrency prices in a floating, dr
 - **Menu-bar ticker** - optionally show one tracked coin's price in the macOS menu bar.
 - **Background-only transparency** - the widget background fades from 50% to 100%, while text and charts stay readable.
 - **Selectable color themes** - keep the default CryptoFloat look or switch to Tokyo Night, Dracula, Nord, Catppuccin Mocha, One Dark Pro, Everforest Dark, Gruvbox Dark, or Cyberpunk Neon.
+- **Selectable data sources** - switch between KuCoin, Binance, and CoinGecko from the menu bar.
 - **Color-coded movement** - green/red 24h changes, price-change flashes, arrows, and accent tinting.
 - **Resilient updates** - keeps the last known price during network hiccups and shows updated/reconnecting status.
 - **Generated app icon** - build script creates and bundles a modern line-chart app icon.
@@ -23,11 +24,17 @@ A native macOS menu bar app for tracking cryptocurrency prices in a floating, dr
 
 ## Data Source
 
-Prices come from the public KuCoin API (`api.kucoin.com`). Each coin is tracked as a `SYMBOL-USDT` trading pair.
+CryptoFloat can use multiple public market-data providers:
 
-- Current price and 24h change use KuCoin market stats.
-- Row sparklines use hourly candle data.
-- The detail popup uses 2-hour candles across roughly 7 days.
+| Provider | Pair/Currency | Notes |
+| --- | --- | --- |
+| KuCoin | `SYMBOL-USDT` | Default source; exchange-style market stats and candles |
+| Binance | `SYMBOLUSDT` | Uses Binance public market-data ticker and kline endpoints |
+| CoinGecko | USD | Uses CoinGecko aggregate market data; common symbols are mapped to CoinGecko coin IDs |
+
+Current price and 24h change use the selected provider. Row sparklines and 7-day chart popups also switch with the selected provider.
+
+CoinGecko has broad coverage but public endpoints are IP-rate-limited. Unknown or ambiguous symbols may not resolve unless they are in CryptoFloat's built-in CoinGecko symbol map.
 
 ## Requirements
 
@@ -87,6 +94,7 @@ cp -r CryptoFloat.app /Applications/
 | Expand/Collapse Prices | Same as clicking the floating widget |
 | Floating Widget | Choose Simple Bitcoin or Marquee Prices |
 | Theme | Choose the active color scheme |
+| Data Source | Choose KuCoin, Binance, or CoinGecko |
 | Transparency | Adjust background opacity from 50% to 100% |
 | Refresh Rate | Choose update interval from 5 seconds to 5 minutes |
 | Show Sparklines | Toggle row mini charts |
@@ -103,7 +111,7 @@ cp -r CryptoFloat.app /Applications/
 2. Select **Add Cryptocurrency...**.
 3. Enter a trading symbol such as `BTC`, `ETH`, `SOL`, or `DOGE`.
 
-CryptoFloat automatically tracks the symbol as `SYMBOL-USDT` on KuCoin.
+CryptoFloat tracks the symbol through the currently selected data source. KuCoin and Binance use USDT pairs; CoinGecko uses USD aggregate market data for supported mapped symbols.
 
 Common symbols:
 
@@ -117,7 +125,7 @@ Common symbols:
 - `AVAX` - Avalanche
 - `LINK` - Chainlink
 
-Any symbol listed on KuCoin against USDT should work.
+Any symbol listed against USDT on the selected exchange source should work. CoinGecko works best for common symbols already mapped in the app.
 
 ## Build Output
 
@@ -146,6 +154,7 @@ Example:
     "ETH",
     "SOL"
   ],
+  "dataProvider": "kuCoin",
   "floatingWidgetMode": "bitcoin",
   "isExpanded": true,
   "menuBarSymbol": null,
@@ -162,6 +171,12 @@ Example:
 
 - `"bitcoin"` - compact Bitcoin button
 - `"marquee"` - scrolling price ticker
+
+`dataProvider` can be:
+
+- `"kuCoin"` - KuCoin `SYMBOL-USDT`
+- `"binance"` - Binance `SYMBOLUSDT`
+- `"coinGecko"` - CoinGecko USD aggregate market data
 
 `theme` can be:
 
@@ -197,8 +212,9 @@ xcode-select --install
 ### Prices Show `-` Or `reconnecting...`
 
 - Check your internet connection.
-- KuCoin may be temporarily unavailable.
-- The symbol may not be listed against USDT.
+- The selected data provider may be temporarily unavailable or region-restricted.
+- The symbol may not be listed against USDT on the selected exchange source.
+- CoinGecko may not have a built-in mapping for that symbol.
 - Use **Refresh Now** from the menu bar.
 
 ### Icon Does Not Update Immediately

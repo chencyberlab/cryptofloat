@@ -177,6 +177,27 @@ enum FloatingWidgetMode: String, Codable {
     case marquee
 }
 
+enum DataProvider: String, Codable, CaseIterable {
+    case kuCoin
+    case binance
+    case coinGecko
+
+    var displayName: String {
+        switch self {
+        case .kuCoin: return "KuCoin"
+        case .binance: return "Binance"
+        case .coinGecko: return "CoinGecko"
+        }
+    }
+
+    var quoteLabel: String {
+        switch self {
+        case .coinGecko: return "USD"
+        case .kuCoin, .binance: return "USDT"
+        }
+    }
+}
+
 struct AppConfig: Codable {
     var cryptos: [String]
     var transparency: Double
@@ -188,6 +209,7 @@ struct AppConfig: Codable {
     var menuBarSymbol: String?
     var floatingWidgetMode: FloatingWidgetMode
     var theme: AppThemeName
+    var dataProvider: DataProvider
 
     static let `default` = AppConfig(
         cryptos: ["BTC", "ETH", "SOL"],
@@ -199,7 +221,8 @@ struct AppConfig: Codable {
         showSparklines: true,
         menuBarSymbol: nil,
         floatingWidgetMode: .bitcoin,
-        theme: .cryptoFloat
+        theme: .cryptoFloat,
+        dataProvider: .kuCoin
     )
 
     static let configPath = FileManager.default.homeDirectoryForCurrentUser
@@ -226,7 +249,7 @@ struct AppConfig: Codable {
 // config files (and future schema changes) working seamlessly.
 extension AppConfig {
     enum CodingKeys: String, CodingKey {
-        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode, theme
+        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode, theme, dataProvider
     }
 
     init(from decoder: Decoder) throws {
@@ -242,6 +265,7 @@ extension AppConfig {
         menuBarSymbol  = try? c.decode(String.self,    forKey: .menuBarSymbol)
         floatingWidgetMode = (try? c.decode(FloatingWidgetMode.self, forKey: .floatingWidgetMode)) ?? d.floatingWidgetMode
         theme          = (try? c.decode(AppThemeName.self, forKey: .theme)) ?? d.theme
+        dataProvider   = (try? c.decode(DataProvider.self, forKey: .dataProvider)) ?? d.dataProvider
     }
 }
 
@@ -312,37 +336,87 @@ struct ChartPoint {
     let price: Double
 }
 
-// MARK: - KuCoin API Manager
+// MARK: - Market Data API Manager
 class CryptoAPI {
     static let shared = CryptoAPI()
-    private let baseURL = "https://api.kucoin.com"
+    private let kuCoinBaseURL = "https://api.kucoin.com"
+    private let binanceBaseURL = "https://data-api.binance.vision"
+    private let coinGeckoBaseURL = "https://api.coingecko.com/api/v3"
 
-    func fetchPrice(for symbol: String, completion: @escaping (PriceData) -> Void) {
-        let pair = "\(symbol.uppercased())-USDT"
-        let urlString = "\(baseURL)/api/v1/market/stats?symbol=\(pair)"
+    private let coinGeckoIDs: [String: String] = [
+        "BTC": "bitcoin",
+        "ETH": "ethereum",
+        "SOL": "solana",
+        "ADA": "cardano",
+        "DOGE": "dogecoin",
+        "XRP": "ripple",
+        "DOT": "polkadot",
+        "AVAX": "avalanche-2",
+        "LINK": "chainlink",
+        "MATIC": "matic-network",
+        "POL": "polygon-ecosystem-token",
+        "BNB": "binancecoin",
+        "LTC": "litecoin",
+        "BCH": "bitcoin-cash",
+        "SHIB": "shiba-inu",
+        "PEPE": "pepe",
+        "UNI": "uniswap",
+        "AAVE": "aave",
+        "NEAR": "near",
+        "ATOM": "cosmos",
+        "ETC": "ethereum-classic",
+        "FIL": "filecoin",
+        "TRX": "tron",
+        "TON": "the-open-network",
+        "OKB": "okb"
+    ]
 
-        guard let url = URL(string: urlString) else {
-            completion(PriceData(price: 0, change24h: 0, hasError: true))
-            return
-        }
+    private func errorPrice() -> PriceData {
+        return PriceData(price: 0, change24h: 0, hasError: true)
+    }
 
+    private func request(_ url: URL, completion: @escaping (Data?) -> Void) {
         var request = URLRequest(url: url)
         request.setValue("CryptoFloat/1.1", forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = 10
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        URLSession.shared.dataTask(with: request) { data, _, error in
             if let error = error {
-                print("Network error for \(symbol): \(error.localizedDescription)")
-                DispatchQueue.main.async {
-                    completion(PriceData(price: 0, change24h: 0, hasError: true))
-                }
+                print("Network error: \(error.localizedDescription)")
+                DispatchQueue.main.async { completion(nil) }
                 return
             }
+            DispatchQueue.main.async { completion(data) }
+        }.resume()
+    }
 
+    private func coinGeckoID(for symbol: String) -> String? {
+        return coinGeckoIDs[symbol.uppercased()]
+    }
+
+    func fetchPrice(for symbol: String, provider: DataProvider, completion: @escaping (PriceData) -> Void) {
+        switch provider {
+        case .kuCoin:
+            fetchKuCoinPrice(for: symbol, completion: completion)
+        case .binance:
+            fetchBinancePrice(for: symbol, completion: completion)
+        case .coinGecko:
+            fetchCoinGeckoPrice(for: symbol, completion: completion)
+        }
+    }
+
+    private func fetchKuCoinPrice(for symbol: String, completion: @escaping (PriceData) -> Void) {
+        let pair = "\(symbol.uppercased())-USDT"
+        let urlString = "\(kuCoinBaseURL)/api/v1/market/stats?symbol=\(pair)"
+
+        guard let url = URL(string: urlString) else {
+            completion(errorPrice())
+            return
+        }
+
+        request(url) { data in
             guard let data = data else {
-                DispatchQueue.main.async {
-                    completion(PriceData(price: 0, change24h: 0, hasError: true))
-                }
+                completion(self.errorPrice())
                 return
             }
 
@@ -358,30 +432,85 @@ class CryptoAPI {
                     let changeRateStr = dataDict["changeRate"] as? String ?? "0"
                     let changeRate = (Double(changeRateStr) ?? 0) * 100
 
-                    DispatchQueue.main.async {
-                        completion(PriceData(price: price, change24h: changeRate, hasError: false))
-                    }
+                    completion(PriceData(price: price, change24h: changeRate, hasError: false))
                 } else {
-                    DispatchQueue.main.async {
-                        completion(PriceData(price: 0, change24h: 0, hasError: true))
-                    }
+                    completion(self.errorPrice())
                 }
             } catch {
-                DispatchQueue.main.async {
-                    completion(PriceData(price: 0, change24h: 0, hasError: true))
-                }
+                completion(self.errorPrice())
             }
-        }.resume()
+        }
     }
 
-    func fetchAllPrices(for symbols: [String], completion: @escaping ([String: PriceData]) -> Void) {
+    private func fetchBinancePrice(for symbol: String, completion: @escaping (PriceData) -> Void) {
+        let pair = "\(symbol.uppercased())USDT"
+        let urlString = "\(binanceBaseURL)/api/v3/ticker/24hr?symbol=\(pair)"
+
+        guard let url = URL(string: urlString) else {
+            completion(errorPrice())
+            return
+        }
+
+        request(url) { data in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let priceString = json["lastPrice"] as? String,
+                  let price = Double(priceString) else {
+                completion(self.errorPrice())
+                return
+            }
+
+            let changeString = json["priceChangePercent"] as? String ?? "0"
+            let change = Double(changeString) ?? 0
+            completion(PriceData(price: price, change24h: change, hasError: false))
+        }
+    }
+
+    private func fetchCoinGeckoPrice(for symbol: String, completion: @escaping (PriceData) -> Void) {
+        guard let id = coinGeckoID(for: symbol) else {
+            completion(errorPrice())
+            return
+        }
+
+        var components = URLComponents(string: "\(coinGeckoBaseURL)/simple/price")
+        components?.queryItems = [
+            URLQueryItem(name: "ids", value: id),
+            URLQueryItem(name: "vs_currencies", value: "usd"),
+            URLQueryItem(name: "include_24hr_change", value: "true")
+        ]
+
+        guard let url = components?.url else {
+            completion(errorPrice())
+            return
+        }
+
+        request(url) { data in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let dataDict = json[id] as? [String: Any],
+                  let price = dataDict["usd"] as? Double else {
+                completion(self.errorPrice())
+                return
+            }
+
+            let change = dataDict["usd_24h_change"] as? Double ?? 0
+            completion(PriceData(price: price, change24h: change, hasError: false))
+        }
+    }
+
+    func fetchAllPrices(for symbols: [String], provider: DataProvider, completion: @escaping ([String: PriceData]) -> Void) {
+        if provider == .coinGecko {
+            fetchCoinGeckoAllPrices(for: symbols, completion: completion)
+            return
+        }
+
         let group = DispatchGroup()
         var results: [String: PriceData] = [:]
         let lock = NSLock()
 
         for symbol in symbols {
             group.enter()
-            fetchPrice(for: symbol) { data in
+            fetchPrice(for: symbol, provider: provider) { data in
                 lock.lock()
                 results[symbol] = data
                 lock.unlock()
@@ -394,24 +523,76 @@ class CryptoAPI {
         }
     }
 
+    private func fetchCoinGeckoAllPrices(for symbols: [String], completion: @escaping ([String: PriceData]) -> Void) {
+        let pairs = symbols.compactMap { symbol -> (symbol: String, id: String)? in
+            guard let id = coinGeckoID(for: symbol) else { return nil }
+            return (symbol, id)
+        }
+
+        guard !pairs.isEmpty else {
+            completion(Dictionary(uniqueKeysWithValues: symbols.map { ($0, errorPrice()) }))
+            return
+        }
+
+        var components = URLComponents(string: "\(coinGeckoBaseURL)/simple/price")
+        components?.queryItems = [
+            URLQueryItem(name: "ids", value: pairs.map { $0.id }.joined(separator: ",")),
+            URLQueryItem(name: "vs_currencies", value: "usd"),
+            URLQueryItem(name: "include_24hr_change", value: "true")
+        ]
+
+        guard let url = components?.url else {
+            completion(Dictionary(uniqueKeysWithValues: symbols.map { ($0, errorPrice()) }))
+            return
+        }
+
+        request(url) { data in
+            var results = Dictionary(uniqueKeysWithValues: symbols.map { ($0, self.errorPrice()) })
+
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                completion(results)
+                return
+            }
+
+            for pair in pairs {
+                guard let dataDict = json[pair.id] as? [String: Any],
+                      let price = dataDict["usd"] as? Double else {
+                    continue
+                }
+                let change = dataDict["usd_24h_change"] as? Double ?? 0
+                results[pair.symbol] = PriceData(price: price, change24h: change, hasError: false)
+            }
+
+            completion(results)
+        }
+    }
+
     /// Fetches ~24h of hourly closing prices for a tiny trend sparkline.
     /// Returns an empty array on any failure so the UI can simply skip drawing.
-    func fetchSparkline(for symbol: String, completion: @escaping ([Double]) -> Void) {
+    func fetchSparkline(for symbol: String, provider: DataProvider, completion: @escaping ([Double]) -> Void) {
+        switch provider {
+        case .kuCoin:
+            fetchKuCoinSparkline(for: symbol, completion: completion)
+        case .binance:
+            fetchBinanceSparkline(for: symbol, completion: completion)
+        case .coinGecko:
+            fetchCoinGeckoSparkline(for: symbol, completion: completion)
+        }
+    }
+
+    private func fetchKuCoinSparkline(for symbol: String, completion: @escaping ([Double]) -> Void) {
         let pair = "\(symbol.uppercased())-USDT"
         let end = Int(Date().timeIntervalSince1970)
         let start = end - 60 * 60 * 26  // 26h window to comfortably capture 24 hourly candles
-        let urlString = "\(baseURL)/api/v1/market/candles?type=1hour&symbol=\(pair)&startAt=\(start)&endAt=\(end)"
+        let urlString = "\(kuCoinBaseURL)/api/v1/market/candles?type=1hour&symbol=\(pair)&startAt=\(start)&endAt=\(end)"
 
         guard let url = URL(string: urlString) else {
             DispatchQueue.main.async { completion([]) }
             return
         }
 
-        var request = URLRequest(url: url)
-        request.setValue("CryptoFloat/1.1", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 10
-
-        URLSession.shared.dataTask(with: request) { data, _, _ in
+        request(url) { data in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let code = json["code"] as? String, code == "200000",
@@ -428,28 +609,67 @@ class CryptoAPI {
             let chronological = Array(closesNewestFirst.reversed())
             let trimmed = Array(chronological.suffix(32))
 
-            DispatchQueue.main.async { completion(trimmed) }
-        }.resume()
+            completion(trimmed)
+        }
     }
 
-    /// Fetches 7 days of two-hour closing prices for the detail popup chart.
-    /// Returns an empty array on any failure so the popup can show a soft error state.
-    func fetchSevenDayChart(for symbol: String, completion: @escaping ([ChartPoint]) -> Void) {
-        let pair = "\(symbol.uppercased())-USDT"
-        let end = Int(Date().timeIntervalSince1970)
-        let start = end - 60 * 60 * 24 * 7
-        let urlString = "\(baseURL)/api/v1/market/candles?type=2hour&symbol=\(pair)&startAt=\(start)&endAt=\(end)"
+    private func fetchBinanceSparkline(for symbol: String, completion: @escaping ([Double]) -> Void) {
+        let pair = "\(symbol.uppercased())USDT"
+        let urlString = "\(binanceBaseURL)/api/v3/klines?symbol=\(pair)&interval=1h&limit=32"
 
         guard let url = URL(string: urlString) else {
             DispatchQueue.main.async { completion([]) }
             return
         }
 
-        var request = URLRequest(url: url)
-        request.setValue("CryptoFloat/1.1", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 10
+        request(url) { data in
+            guard let data = data,
+                  let rows = try? JSONSerialization.jsonObject(with: data) as? [[Any]] else {
+                completion([])
+                return
+            }
 
-        URLSession.shared.dataTask(with: request) { data, _, _ in
+            let values = rows.compactMap { row -> Double? in
+                guard row.count > 4, let close = row[4] as? String else { return nil }
+                return Double(close)
+            }
+            completion(Array(values.suffix(32)))
+        }
+    }
+
+    private func fetchCoinGeckoSparkline(for symbol: String, completion: @escaping ([Double]) -> Void) {
+        fetchCoinGeckoMarketChart(for: symbol, days: 1) { points in
+            completion(Array(points.map { $0.price }.suffix(32)))
+        }
+    }
+
+    /// Fetches 7 days of two-hour closing prices for the detail popup chart.
+    /// Returns an empty array on any failure so the popup can show a soft error state.
+    func fetchSevenDayChart(for symbol: String, provider: DataProvider, completion: @escaping ([ChartPoint]) -> Void) {
+        switch provider {
+        case .kuCoin:
+            fetchKuCoinSevenDayChart(for: symbol, completion: completion)
+        case .binance:
+            fetchBinanceSevenDayChart(for: symbol, completion: completion)
+        case .coinGecko:
+            fetchCoinGeckoMarketChart(for: symbol, days: 7) { points in
+                completion(Array(points.suffix(90)))
+            }
+        }
+    }
+
+    private func fetchKuCoinSevenDayChart(for symbol: String, completion: @escaping ([ChartPoint]) -> Void) {
+        let pair = "\(symbol.uppercased())-USDT"
+        let end = Int(Date().timeIntervalSince1970)
+        let start = end - 60 * 60 * 24 * 7
+        let urlString = "\(kuCoinBaseURL)/api/v1/market/candles?type=2hour&symbol=\(pair)&startAt=\(start)&endAt=\(end)"
+
+        guard let url = URL(string: urlString) else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        request(url) { data in
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let code = json["code"] as? String, code == "200000",
@@ -481,8 +701,76 @@ class CryptoAPI {
             let chronological = Array(pointsNewestFirst.reversed())
             let trimmed = Array(chronological.suffix(90))
 
-            DispatchQueue.main.async { completion(trimmed) }
-        }.resume()
+            completion(trimmed)
+        }
+    }
+
+    private func fetchBinanceSevenDayChart(for symbol: String, completion: @escaping ([ChartPoint]) -> Void) {
+        let pair = "\(symbol.uppercased())USDT"
+        let urlString = "\(binanceBaseURL)/api/v3/klines?symbol=\(pair)&interval=2h&limit=84"
+
+        guard let url = URL(string: urlString) else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        request(url) { data in
+            guard let data = data,
+                  let rows = try? JSONSerialization.jsonObject(with: data) as? [[Any]] else {
+                completion([])
+                return
+            }
+
+            let points: [ChartPoint] = rows.compactMap { row in
+                guard row.count > 4,
+                      let timeMS = row[0] as? NSNumber,
+                      let close = row[4] as? String,
+                      let price = Double(close) else {
+                    return nil
+                }
+                return ChartPoint(time: timeMS.doubleValue / 1000.0, price: price)
+            }
+
+            completion(points)
+        }
+    }
+
+    private func fetchCoinGeckoMarketChart(for symbol: String, days: Int, completion: @escaping ([ChartPoint]) -> Void) {
+        guard let id = coinGeckoID(for: symbol) else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        var components = URLComponents(string: "\(coinGeckoBaseURL)/coins/\(id)/market_chart")
+        components?.queryItems = [
+            URLQueryItem(name: "vs_currency", value: "usd"),
+            URLQueryItem(name: "days", value: "\(days)")
+        ]
+
+        guard let url = components?.url else {
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
+
+        request(url) { data in
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let rows = json["prices"] as? [[Any]] else {
+                completion([])
+                return
+            }
+
+            let points: [ChartPoint] = rows.compactMap { row in
+                guard row.count > 1,
+                      let timeMS = row[0] as? NSNumber,
+                      let priceNumber = row[1] as? NSNumber else {
+                    return nil
+                }
+                return ChartPoint(time: timeMS.doubleValue / 1000.0, price: priceNumber.doubleValue)
+            }
+
+            completion(points)
+        }
     }
 }
 
@@ -1743,6 +2031,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var menuBarMenu: NSMenu!
     var floatingWidgetMenu: NSMenu!
     var themeMenu: NSMenu!
+    var dataProviderMenu: NSMenu!
     var expandCollapseItem: NSMenuItem!
     var sparklineToggleItem: NSMenuItem!
     var updatedLabel: NSTextField?
@@ -1858,6 +2147,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         themeItem.submenu = themeMenu
         menu.addItem(themeItem)
+
+        // Data source submenu
+        dataProviderMenu = NSMenu()
+        updateDataProviderMenu()
+        let dataProviderItem = NSMenuItem(title: "Data Source", action: nil, keyEquivalent: "")
+        dataProviderItem.submenu = dataProviderMenu
+        menu.addItem(dataProviderItem)
 
         // Transparency submenu
         transparencyMenu = NSMenu()
@@ -1994,6 +2290,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func updateDataProviderMenu() {
+        dataProviderMenu.removeAllItems()
+
+        for provider in DataProvider.allCases {
+            let item = NSMenuItem(title: provider.displayName, action: #selector(setDataProvider(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = provider.rawValue
+            item.state = config.dataProvider == provider ? .on : .off
+            dataProviderMenu.addItem(item)
+        }
+    }
+
     func updateWindowShadow() {
         floatingWindow?.hasShadow = shouldUseWindowShadow
     }
@@ -2104,7 +2412,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         contentPanel?.backgroundOpacity = CGFloat(config.transparency)
         containerView.addSubview(contentPanel!)
 
-        let titleLabel = NSTextField(labelWithString: "PRICES · USDT")
+        let titleLabel = NSTextField(labelWithString: "PRICES · \(config.dataProvider.quoteLabel)")
         titleLabel.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
         titleLabel.textColor = ThemeCatalog.current.accent.color(alpha: 0.8)
         titleLabel.isBezeled = false
@@ -2203,7 +2511,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        CryptoAPI.shared.fetchSevenDayChart(for: symbol) { [weak self, weak content] points in
+        CryptoAPI.shared.fetchSevenDayChart(for: symbol, provider: config.dataProvider) { [weak self, weak content] points in
             guard let self = self, self.activeChartSymbol == symbol else { return }
             if !points.isEmpty {
                 self.chartCache[symbol] = (points, Date())
@@ -2329,7 +2637,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        CryptoAPI.shared.fetchAllPrices(for: config.cryptos) { [weak self] prices in
+        CryptoAPI.shared.fetchAllPrices(for: config.cryptos, provider: config.dataProvider) { [weak self] prices in
             guard let self = self else { return }
             self.latestPrices = prices
             self.marqueeWidget?.setMarketData(symbols: self.config.cryptos, prices: prices)
@@ -2362,7 +2670,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 cryptoRows[symbol]?.setSparkline(cached.values)
                 if now.timeIntervalSince(cached.fetchedAt) < 290 { continue }
             }
-            CryptoAPI.shared.fetchSparkline(for: symbol) { [weak self] values in
+            CryptoAPI.shared.fetchSparkline(for: symbol, provider: config.dataProvider) { [weak self] values in
                 guard let self = self else { return }
                 if !values.isEmpty {
                     self.sparklineCache[symbol] = (values, Date())
@@ -2474,6 +2782,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusLabel()
     }
 
+    @objc func setDataProvider(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let provider = DataProvider(rawValue: rawValue),
+              provider != config.dataProvider else {
+            return
+        }
+
+        hideChartPopup()
+        config.dataProvider = provider
+        config.save()
+        updateDataProviderMenu()
+
+        latestPrices.removeAll()
+        sparklineCache.removeAll()
+        chartCache.removeAll()
+        marqueeWidget?.setMarketData(symbols: config.cryptos, prices: latestPrices)
+
+        if config.isExpanded {
+            rebuildWindow()
+        } else {
+            refreshPrices()
+        }
+    }
+
     @objc func setTransparency(_ sender: NSMenuItem) {
         let level = Double(sender.tag) / 100.0
         config.transparency = level
@@ -2521,7 +2853,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func addCrypto() {
         let alert = NSAlert()
         alert.messageText = "Add Cryptocurrency"
-        alert.informativeText = "Enter the trading symbol (e.g., 'BTC', 'ETH', 'SOL', 'DOGE').\n\nThe symbol will be paired with USDT on KuCoin."
+        alert.informativeText = "Enter the trading symbol (e.g., 'BTC', 'ETH', 'SOL', 'DOGE').\n\nKuCoin and Binance use USDT pairs. CoinGecko uses USD aggregate data for supported mapped symbols."
         alert.addButton(withTitle: "Add")
         alert.addButton(withTitle: "Cancel")
 
@@ -2573,6 +2905,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.refreshRate = AppConfig.default.refreshRate
         config.floatingWidgetMode = AppConfig.default.floatingWidgetMode
         config.theme = AppConfig.default.theme
+        config.dataProvider = AppConfig.default.dataProvider
         ThemeCatalog.current = ThemeCatalog.theme(for: config.theme)
         sanitizeMenuBarSymbol()
         config.save()
@@ -2581,6 +2914,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuBarMenu()
         updateFloatingWidgetMenu()
         updateThemeMenu()
+        updateDataProviderMenu()
         updateMenuBarTitle()
         rebuildWindow()
         if !config.isExpanded {
