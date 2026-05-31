@@ -1,6 +1,176 @@
 import Cocoa
 import Foundation
 
+// MARK: - Themes
+enum AppThemeName: String, Codable, CaseIterable {
+    case cryptoFloat
+    case tokyoNight
+    case dracula
+    case nord
+    case catppuccinMocha
+    case oneDarkPro
+    case everforestDark
+    case gruvboxDark
+    case cyberpunkNeon
+}
+
+struct RGBColor {
+    let red: CGFloat
+    let green: CGFloat
+    let blue: CGFloat
+
+    init(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
+
+    func color(alpha: CGFloat = 1) -> NSColor {
+        return NSColor(calibratedRed: red / 255, green: green / 255, blue: blue / 255, alpha: alpha)
+    }
+}
+
+struct AppTheme {
+    let id: AppThemeName
+    let displayName: String
+    let background: RGBColor
+    let backgroundDark: RGBColor
+    let foreground: RGBColor
+    let accent: RGBColor
+    let accentSecondary: RGBColor
+    let positive: RGBColor
+    let negative: RGBColor
+    let warning: RGBColor
+}
+
+enum ThemeCatalog {
+    static var current = theme(for: .cryptoFloat)
+
+    static let all: [AppTheme] = AppThemeName.allCases.map { theme(for: $0) }
+
+    static func theme(for name: AppThemeName) -> AppTheme {
+        switch name {
+        case .cryptoFloat:
+            return AppTheme(
+                id: name,
+                displayName: "CryptoFloat Default",
+                background: RGBColor(31, 43, 69),
+                backgroundDark: RGBColor(13, 17, 28),
+                foreground: RGBColor(248, 250, 255),
+                accent: RGBColor(122, 162, 247),
+                accentSecondary: RGBColor(125, 207, 255),
+                positive: RGBColor(77, 230, 140),
+                negative: RGBColor(255, 107, 107),
+                warning: RGBColor(224, 175, 104)
+            )
+        case .tokyoNight:
+            return AppTheme(
+                id: name,
+                displayName: "Tokyo Night",
+                background: RGBColor(26, 27, 38),
+                backgroundDark: RGBColor(22, 22, 30),
+                foreground: RGBColor(192, 202, 245),
+                accent: RGBColor(122, 162, 247),
+                accentSecondary: RGBColor(125, 207, 255),
+                positive: RGBColor(158, 206, 106),
+                negative: RGBColor(247, 118, 142),
+                warning: RGBColor(224, 175, 104)
+            )
+        case .dracula:
+            return AppTheme(
+                id: name,
+                displayName: "Dracula",
+                background: RGBColor(40, 42, 54),
+                backgroundDark: RGBColor(68, 71, 90),
+                foreground: RGBColor(248, 248, 242),
+                accent: RGBColor(189, 147, 249),
+                accentSecondary: RGBColor(139, 233, 253),
+                positive: RGBColor(80, 250, 123),
+                negative: RGBColor(255, 121, 198),
+                warning: RGBColor(255, 184, 108)
+            )
+        case .nord:
+            return AppTheme(
+                id: name,
+                displayName: "Nord",
+                background: RGBColor(46, 52, 64),
+                backgroundDark: RGBColor(36, 41, 51),
+                foreground: RGBColor(236, 239, 244),
+                accent: RGBColor(136, 192, 208),
+                accentSecondary: RGBColor(143, 188, 187),
+                positive: RGBColor(163, 190, 140),
+                negative: RGBColor(191, 97, 106),
+                warning: RGBColor(235, 203, 139)
+            )
+        case .catppuccinMocha:
+            return AppTheme(
+                id: name,
+                displayName: "Catppuccin Mocha",
+                background: RGBColor(30, 30, 46),
+                backgroundDark: RGBColor(17, 17, 27),
+                foreground: RGBColor(205, 214, 244),
+                accent: RGBColor(137, 180, 250),
+                accentSecondary: RGBColor(180, 190, 254),
+                positive: RGBColor(166, 227, 161),
+                negative: RGBColor(243, 139, 168),
+                warning: RGBColor(249, 226, 175)
+            )
+        case .oneDarkPro:
+            return AppTheme(
+                id: name,
+                displayName: "One Dark Pro",
+                background: RGBColor(40, 44, 52),
+                backgroundDark: RGBColor(33, 37, 43),
+                foreground: RGBColor(171, 178, 191),
+                accent: RGBColor(97, 175, 239),
+                accentSecondary: RGBColor(86, 182, 194),
+                positive: RGBColor(152, 195, 121),
+                negative: RGBColor(224, 108, 117),
+                warning: RGBColor(229, 192, 123)
+            )
+        case .everforestDark:
+            return AppTheme(
+                id: name,
+                displayName: "Everforest Dark",
+                background: RGBColor(45, 53, 59),
+                backgroundDark: RGBColor(39, 46, 51),
+                foreground: RGBColor(211, 198, 170),
+                accent: RGBColor(127, 187, 179),
+                accentSecondary: RGBColor(131, 192, 146),
+                positive: RGBColor(167, 192, 128),
+                negative: RGBColor(230, 126, 128),
+                warning: RGBColor(219, 188, 127)
+            )
+        case .gruvboxDark:
+            return AppTheme(
+                id: name,
+                displayName: "Gruvbox Dark",
+                background: RGBColor(40, 40, 40),
+                backgroundDark: RGBColor(29, 32, 33),
+                foreground: RGBColor(235, 219, 178),
+                accent: RGBColor(214, 93, 14),
+                accentSecondary: RGBColor(69, 133, 136),
+                positive: RGBColor(184, 187, 38),
+                negative: RGBColor(204, 36, 29),
+                warning: RGBColor(250, 189, 47)
+            )
+        case .cyberpunkNeon:
+            return AppTheme(
+                id: name,
+                displayName: "Cyberpunk Neon",
+                background: RGBColor(10, 10, 10),
+                backgroundDark: RGBColor(3, 3, 6),
+                foreground: RGBColor(238, 245, 255),
+                accent: RGBColor(0, 245, 255),
+                accentSecondary: RGBColor(176, 38, 255),
+                positive: RGBColor(0, 245, 255),
+                negative: RGBColor(255, 0, 128),
+                warning: RGBColor(255, 196, 0)
+            )
+        }
+    }
+}
+
 // MARK: - Configuration
 enum FloatingWidgetMode: String, Codable {
     case bitcoin
@@ -17,6 +187,7 @@ struct AppConfig: Codable {
     var showSparklines: Bool
     var menuBarSymbol: String?
     var floatingWidgetMode: FloatingWidgetMode
+    var theme: AppThemeName
 
     static let `default` = AppConfig(
         cryptos: ["BTC", "ETH", "SOL"],
@@ -27,7 +198,8 @@ struct AppConfig: Codable {
         refreshRate: 30,
         showSparklines: true,
         menuBarSymbol: nil,
-        floatingWidgetMode: .bitcoin
+        floatingWidgetMode: .bitcoin,
+        theme: .cryptoFloat
     )
 
     static let configPath = FileManager.default.homeDirectoryForCurrentUser
@@ -54,7 +226,7 @@ struct AppConfig: Codable {
 // config files (and future schema changes) working seamlessly.
 extension AppConfig {
     enum CodingKeys: String, CodingKey {
-        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode
+        case cryptos, transparency, windowX, windowY, isExpanded, refreshRate, showSparklines, menuBarSymbol, floatingWidgetMode, theme
     }
 
     init(from decoder: Decoder) throws {
@@ -69,6 +241,7 @@ extension AppConfig {
         showSparklines = (try? c.decode(Bool.self,     forKey: .showSparklines)) ?? d.showSparklines
         menuBarSymbol  = try? c.decode(String.self,    forKey: .menuBarSymbol)
         floatingWidgetMode = (try? c.decode(FloatingWidgetMode.self, forKey: .floatingWidgetMode)) ?? d.floatingWidgetMode
+        theme          = (try? c.decode(AppThemeName.self, forKey: .theme)) ?? d.theme
     }
 }
 
@@ -353,12 +526,13 @@ class ToggleButtonView: NSView {
 
     private func accentRingColor() -> NSColor {
         let strong: CGFloat = isHovered ? 0.9 : 0.6
+        let theme = ThemeCatalog.current
         if accentChange > 0.05 {
-            return NSColor(calibratedRed: 0.30, green: 0.85, blue: 0.50, alpha: strong)
+            return theme.positive.color(alpha: strong)
         } else if accentChange < -0.05 {
-            return NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: strong)
+            return theme.negative.color(alpha: strong)
         } else {
-            return NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.78, alpha: isHovered ? 0.85 : 0.45)
+            return theme.accent.color(alpha: isHovered ? 0.85 : 0.45)
         }
     }
 
@@ -371,7 +545,7 @@ class ToggleButtonView: NSView {
         // Soft outer glow on hover
         if isHovered {
             let glow = NSBezierPath(ovalIn: bounds.insetBy(dx: 0.5, dy: 0.5))
-            NSColor(calibratedRed: 0.5, green: 0.7, blue: 1.0, alpha: 0.18 * backgroundOpacity).setStroke()
+            ThemeCatalog.current.accent.color(alpha: 0.18 * backgroundOpacity).setStroke()
             glow.lineWidth = 3
             glow.stroke()
         }
@@ -379,12 +553,13 @@ class ToggleButtonView: NSView {
         // Vertical gradient fill for depth
         let top: NSColor
         let bottom: NSColor
+        let theme = ThemeCatalog.current
         if isHovered {
-            top = NSColor(calibratedRed: 0.30, green: 0.42, blue: 0.62, alpha: 0.97 * backgroundOpacity)
-            bottom = NSColor(calibratedRed: 0.16, green: 0.23, blue: 0.36, alpha: 0.97 * backgroundOpacity)
+            top = theme.accent.color(alpha: 0.30 * backgroundOpacity)
+            bottom = theme.background.color(alpha: 0.97 * backgroundOpacity)
         } else {
-            top = NSColor(calibratedRed: 0.22, green: 0.30, blue: 0.44, alpha: 0.92 * backgroundOpacity)
-            bottom = NSColor(calibratedRed: 0.11, green: 0.15, blue: 0.24, alpha: 0.92 * backgroundOpacity)
+            top = theme.background.color(alpha: 0.92 * backgroundOpacity)
+            bottom = theme.backgroundDark.color(alpha: 0.92 * backgroundOpacity)
         }
         if let gradient = NSGradient(starting: top, ending: bottom) {
             gradient.draw(in: path, angle: -90)
@@ -408,7 +583,7 @@ class ToggleButtonView: NSView {
         let symbol = "₿"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 19, weight: .semibold),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: ThemeCatalog.current.foreground.color(),
             .shadow: shadow
         ]
         let size = symbol.size(withAttributes: attributes)
@@ -530,12 +705,13 @@ class MarqueeWidgetView: NSView {
     }
 
     private func accentColor(alpha: CGFloat = 1) -> NSColor {
+        let theme = ThemeCatalog.current
         if accentChange > 0.05 {
-            return NSColor(calibratedRed: 0.30, green: 0.90, blue: 0.55, alpha: alpha)
+            return theme.positive.color(alpha: alpha)
         } else if accentChange < -0.05 {
-            return NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: alpha)
+            return theme.negative.color(alpha: alpha)
         }
-        return NSColor(calibratedRed: 0.45, green: 0.60, blue: 0.86, alpha: alpha)
+        return theme.accent.color(alpha: alpha)
     }
 
     private func attributes(font: NSFont, color: NSColor) -> [NSAttributedString.Key: Any] {
@@ -546,27 +722,27 @@ class MarqueeWidgetView: NSView {
     }
 
     private var symbolAttrs: [NSAttributedString.Key: Any] {
-        attributes(font: NSFont.systemFont(ofSize: 13, weight: .bold), color: .white)
+        attributes(font: NSFont.systemFont(ofSize: 13, weight: .bold), color: ThemeCatalog.current.foreground.color())
     }
 
     private var priceAttrs: [NSAttributedString.Key: Any] {
         attributes(
             font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-            color: NSColor(calibratedWhite: 1, alpha: 0.86)
+            color: ThemeCatalog.current.foreground.color(alpha: 0.86)
         )
     }
 
     private var loadingAttrs: [NSAttributedString.Key: Any] {
         attributes(
             font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            color: NSColor(calibratedWhite: 1, alpha: 0.58)
+            color: ThemeCatalog.current.foreground.color(alpha: 0.58)
         )
     }
 
     private func changeAttrs(for change: Double) -> [NSAttributedString.Key: Any] {
         let color = change >= 0
-            ? NSColor(calibratedRed: 0.30, green: 0.90, blue: 0.55, alpha: 1)
-            : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 1)
+            ? ThemeCatalog.current.positive.color()
+            : ThemeCatalog.current.negative.color()
         return attributes(font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium), color: color)
     }
 
@@ -621,7 +797,7 @@ class MarqueeWidgetView: NSView {
 
             let dotAttrs = attributes(
                 font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-                color: NSColor(calibratedWhite: 1, alpha: 0.25)
+                color: ThemeCatalog.current.foreground.color(alpha: 0.25)
             )
             let dotX = x + itemGap / 2 - 2
             "•".draw(at: NSPoint(x: dotX, y: baselineY + 1), withAttributes: dotAttrs)
@@ -662,13 +838,14 @@ class MarqueeWidgetView: NSView {
 
         let rect = bounds.insetBy(dx: 2, dy: 3)
         let background = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        let theme = ThemeCatalog.current
 
         let top = isHovered
-            ? NSColor(calibratedRed: 0.20, green: 0.28, blue: 0.42, alpha: 0.96 * backgroundOpacity)
-            : NSColor(calibratedRed: 0.14, green: 0.20, blue: 0.32, alpha: 0.94 * backgroundOpacity)
+            ? theme.accent.color(alpha: 0.22 * backgroundOpacity)
+            : theme.background.color(alpha: 0.94 * backgroundOpacity)
         let bottom = isHovered
-            ? NSColor(calibratedRed: 0.10, green: 0.15, blue: 0.24, alpha: 0.96 * backgroundOpacity)
-            : NSColor(calibratedRed: 0.07, green: 0.10, blue: 0.18, alpha: 0.94 * backgroundOpacity)
+            ? theme.background.color(alpha: 0.96 * backgroundOpacity)
+            : theme.backgroundDark.color(alpha: 0.94 * backgroundOpacity)
 
         if let gradient = NSGradient(starting: top, ending: bottom) {
             gradient.draw(in: background, angle: -90)
@@ -695,16 +872,16 @@ class MarqueeWidgetView: NSView {
 
         let leftFade = NSBezierPath(rect: NSRect(x: rect.minX, y: rect.minY + 2, width: 22, height: rect.height - 4))
         if let gradient = NSGradient(
-            starting: NSColor(calibratedRed: 0.09, green: 0.13, blue: 0.22, alpha: 0.72 * backgroundOpacity),
-            ending: NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.19, alpha: 0)
+            starting: theme.background.color(alpha: 0.72 * backgroundOpacity),
+            ending: theme.background.color(alpha: 0)
         ) {
             gradient.draw(in: leftFade, angle: 0)
         }
 
         let rightFade = NSBezierPath(rect: NSRect(x: rect.maxX - 22, y: rect.minY + 2, width: 22, height: rect.height - 4))
         if let gradient = NSGradient(
-            starting: NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.19, alpha: 0),
-            ending: NSColor(calibratedRed: 0.09, green: 0.13, blue: 0.22, alpha: 0.72 * backgroundOpacity)
+            starting: theme.background.color(alpha: 0),
+            ending: theme.background.color(alpha: 0.72 * backgroundOpacity)
         ) {
             gradient.draw(in: rightFade, angle: 0)
         }
@@ -768,14 +945,15 @@ class GlassContentView: NSView {
         super.draw(dirtyRect)
 
         let fillPath = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
-        NSColor(calibratedRed: 0.10, green: 0.10, blue: 0.15, alpha: 0.72 * backgroundOpacity).setFill()
+        let theme = ThemeCatalog.current
+        theme.background.color(alpha: 0.72 * backgroundOpacity).setFill()
         fillPath.fill()
 
         // Faint inner highlight along the top edge for a glassy sheen
         let highlight = NSBezierPath()
         highlight.move(to: NSPoint(x: cornerRadius, y: bounds.height - 1))
         highlight.line(to: NSPoint(x: bounds.width - cornerRadius, y: bounds.height - 1))
-        NSColor(calibratedWhite: 1, alpha: 0.12 * backgroundOpacity).setStroke()
+        theme.foreground.color(alpha: 0.12 * backgroundOpacity).setStroke()
         highlight.lineWidth = 1
         highlight.stroke()
 
@@ -785,7 +963,7 @@ class GlassContentView: NSView {
             xRadius: max(cornerRadius - 0.75, 0),
             yRadius: max(cornerRadius - 0.75, 0)
         )
-        NSColor(calibratedRed: 0.4, green: 0.5, blue: 0.7, alpha: 0.3 * backgroundOpacity).setStroke()
+        theme.accent.color(alpha: 0.3 * backgroundOpacity).setStroke()
         path.lineWidth = 1.5
         path.stroke()
     }
@@ -830,8 +1008,8 @@ class SparklineView: NSView {
 
         let isUp = (values.last ?? 0) >= (values.first ?? 0)
         let lineColor = isUp
-            ? NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 0.95)
-            : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 0.95)
+            ? ThemeCatalog.current.positive.color(alpha: 0.95)
+            : ThemeCatalog.current.negative.color(alpha: 0.95)
 
         // Gradient fill beneath the line
         let fillPath = NSBezierPath()
@@ -1027,7 +1205,8 @@ class SevenDayChartContentView: NSView {
         super.draw(dirtyRect)
 
         let fillPath = NSBezierPath(roundedRect: bounds, xRadius: cornerRadius, yRadius: cornerRadius)
-        NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.13, alpha: 0.94 * backgroundOpacity).setFill()
+        let theme = ThemeCatalog.current
+        theme.backgroundDark.color(alpha: 0.94 * backgroundOpacity).setFill()
         fillPath.fill()
 
         let strokeRect = bounds.insetBy(dx: 0.75, dy: 0.75)
@@ -1036,19 +1215,19 @@ class SevenDayChartContentView: NSView {
             xRadius: max(cornerRadius - 0.75, 0),
             yRadius: max(cornerRadius - 0.75, 0)
         )
-        NSColor(calibratedRed: 0.48, green: 0.58, blue: 0.78, alpha: 0.36 * backgroundOpacity).setStroke()
+        theme.accent.color(alpha: 0.36 * backgroundOpacity).setStroke()
         strokePath.lineWidth = 1.5
         strokePath.stroke()
 
         let titleAttrs = attributes(
             font: NSFont.systemFont(ofSize: 14, weight: .semibold),
-            color: .white
+            color: theme.foreground.color()
         )
         "\(symbol)/USDT".draw(at: NSPoint(x: 18, y: bounds.height - 33), withAttributes: titleAttrs)
 
         let tagAttrs = attributes(
             font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-            color: NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: 0.72),
+            color: theme.accent.color(alpha: 0.72),
             alignment: .right
         )
         "7D".draw(in: NSRect(x: bounds.width - 62, y: bounds.height - 31, width: 44, height: 14), withAttributes: tagAttrs)
@@ -1059,7 +1238,7 @@ class SevenDayChartContentView: NSView {
         if let displayPrice = displayPrice {
             let priceAttrs = attributes(
                 font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-                color: NSColor(calibratedWhite: 1, alpha: 0.82)
+                color: theme.foreground.color(alpha: 0.82)
             )
             PriceFormatter.shared.format(displayPrice).draw(
                 at: NSPoint(x: 18, y: bounds.height - 54),
@@ -1070,7 +1249,7 @@ class SevenDayChartContentView: NSView {
         if let hoveredPoint = hoveredPoint {
             let dateAttrs = attributes(
                 font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
-                color: NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: 0.72),
+                color: theme.accent.color(alpha: 0.72),
                 alignment: .right
             )
             hoverDateFormatter.string(from: Date(timeIntervalSince1970: hoveredPoint.time)).draw(
@@ -1080,8 +1259,8 @@ class SevenDayChartContentView: NSView {
         } else if let change = sevenDayChange() ?? change24h {
             let isUp = change >= 0
             let color = isUp
-                ? NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 0.95)
-                : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 0.95)
+                ? theme.positive.color(alpha: 0.95)
+                : theme.negative.color(alpha: 0.95)
             let changeAttrs = attributes(
                 font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
                 color: color,
@@ -1095,7 +1274,8 @@ class SevenDayChartContentView: NSView {
     }
 
     private func drawChart(in rect: NSRect) {
-        let gridColor = NSColor(calibratedWhite: 1, alpha: 0.08)
+        let theme = ThemeCatalog.current
+        let gridColor = theme.foreground.color(alpha: 0.08)
         for i in 0...3 {
             let y = rect.minY + rect.height * CGFloat(i) / 3.0
             let line = NSBezierPath()
@@ -1110,7 +1290,7 @@ class SevenDayChartContentView: NSView {
             let text = isLoading ? "Loading chart..." : "Chart unavailable"
             let attrs = attributes(
                 font: NSFont.systemFont(ofSize: 12, weight: .regular),
-                color: NSColor(calibratedWhite: 1, alpha: 0.52),
+                color: theme.foreground.color(alpha: 0.52),
                 alignment: .center
             )
             text.draw(in: NSRect(x: rect.minX, y: rect.midY - 8, width: rect.width, height: 18), withAttributes: attrs)
@@ -1133,8 +1313,8 @@ class SevenDayChartContentView: NSView {
 
         let isUp = (values.last ?? 0) >= (values.first ?? 0)
         let lineColor = isUp
-            ? NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 0.98)
-            : NSColor(calibratedRed: 1.0, green: 0.42, blue: 0.42, alpha: 0.98)
+            ? theme.positive.color(alpha: 0.98)
+            : theme.negative.color(alpha: 0.98)
 
         let fillPath = NSBezierPath()
         fillPath.move(to: NSPoint(x: rect.minX, y: rect.minY))
@@ -1175,12 +1355,12 @@ class SevenDayChartContentView: NSView {
             let guide = NSBezierPath()
             guide.move(to: NSPoint(x: hovered.x, y: rect.minY))
             guide.line(to: NSPoint(x: hovered.x, y: rect.maxY))
-            NSColor(calibratedWhite: 1, alpha: 0.22).setStroke()
+            theme.foreground.color(alpha: 0.22).setStroke()
             guide.lineWidth = 1
             guide.stroke()
 
             let ring = NSBezierPath(ovalIn: NSRect(x: hovered.x - 4, y: hovered.y - 4, width: 8, height: 8))
-            NSColor(calibratedRed: 0.08, green: 0.09, blue: 0.13, alpha: 0.96).setFill()
+            theme.backgroundDark.color(alpha: 0.96).setFill()
             ring.fill()
             lineColor.setStroke()
             ring.lineWidth = 2
@@ -1189,7 +1369,7 @@ class SevenDayChartContentView: NSView {
             let tooltip = PriceFormatter.shared.format(values[hoveredIndex])
             let tooltipAttrs = attributes(
                 font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .medium),
-                color: .white,
+                color: theme.foreground.color(),
                 alignment: .center
             )
             let textSize = tooltip.size(withAttributes: tooltipAttrs)
@@ -1198,9 +1378,9 @@ class SevenDayChartContentView: NSView {
             let tooltipY = min(hovered.y + 12, rect.maxY - 22)
             let tooltipRect = NSRect(x: tooltipX, y: tooltipY, width: tooltipWidth, height: 20)
             let tooltipPath = NSBezierPath(roundedRect: tooltipRect, xRadius: 7, yRadius: 7)
-            NSColor(calibratedRed: 0.05, green: 0.06, blue: 0.09, alpha: 0.9).setFill()
+            theme.backgroundDark.color(alpha: 0.9).setFill()
             tooltipPath.fill()
-            NSColor(calibratedWhite: 1, alpha: 0.16).setStroke()
+            theme.foreground.color(alpha: 0.16).setStroke()
             tooltipPath.lineWidth = 1
             tooltipPath.stroke()
             tooltip.draw(in: tooltipRect.insetBy(dx: 4, dy: 3), withAttributes: tooltipAttrs)
@@ -1208,7 +1388,7 @@ class SevenDayChartContentView: NSView {
 
         let rangeAttrs = attributes(
             font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular),
-            color: NSColor(calibratedWhite: 1, alpha: 0.42),
+            color: theme.foreground.color(alpha: 0.42),
             alignment: .right
         )
         PriceFormatter.shared.compact(maxV).draw(
@@ -1240,11 +1420,11 @@ class AnimatedPriceLabel: NSTextField {
     }
 
     func flashGreen() {
-        flash(color: NSColor(calibratedRed: 0.2, green: 0.9, blue: 0.4, alpha: 0.8))
+        flash(color: ThemeCatalog.current.positive.color(alpha: 0.8))
     }
 
     func flashRed() {
-        flash(color: NSColor(calibratedRed: 1.0, green: 0.3, blue: 0.3, alpha: 0.8))
+        flash(color: ThemeCatalog.current.negative.color(alpha: 0.8))
     }
 
     private func flash(color: NSColor) {
@@ -1323,7 +1503,9 @@ class CryptoRowView: NSView {
     private var hasLoaded = false
     private var isHovered = false
 
-    private let dimColor = NSColor(calibratedWhite: 0.75, alpha: 0.45)
+    private var dimColor: NSColor {
+        ThemeCatalog.current.foreground.color(alpha: 0.45)
+    }
 
     init(frame: NSRect, symbol: String, showSparkline: Bool) {
         self.symbol = symbol
@@ -1353,10 +1535,10 @@ class CryptoRowView: NSView {
         makeLabel(arrowLabel)
 
         symbolLabel.stringValue = symbol
-        symbolLabel.textColor = .white
+        symbolLabel.textColor = ThemeCatalog.current.foreground.color()
         addSubview(symbolLabel)
 
-        priceLabel.textColor = .white
+        priceLabel.textColor = ThemeCatalog.current.foreground.color()
         priceLabel.alignment = .left
         addSubview(priceLabel)
 
@@ -1434,19 +1616,19 @@ class CryptoRowView: NSView {
         let priceChanged = hasLoaded && price != lastPrice
 
         priceLabel.stringValue = PriceFormatter.shared.format(price)
-        priceLabel.textColor = .white
+        priceLabel.textColor = ThemeCatalog.current.foreground.color()
 
         if priceChanged {
             if priceWentUp {
                 arrowLabel.stringValue = "▲"
-                arrowLabel.textColor = NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 1)
+                arrowLabel.textColor = ThemeCatalog.current.positive.color()
                 priceLabel.animateValueChange(goingUp: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                     self?.fadeOutArrow()
                 }
             } else if priceWentDown {
                 arrowLabel.stringValue = "▼"
-                arrowLabel.textColor = NSColor(calibratedRed: 1, green: 0.4, blue: 0.4, alpha: 1)
+                arrowLabel.textColor = ThemeCatalog.current.negative.color()
                 priceLabel.animateValueChange(goingUp: false)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                     self?.fadeOutArrow()
@@ -1456,10 +1638,10 @@ class CryptoRowView: NSView {
 
         if change >= 0 {
             changeLabel.stringValue = String(format: "+%.2f%%", change)
-            changeLabel.textColor = NSColor(calibratedRed: 0.3, green: 0.9, blue: 0.5, alpha: 1)
+            changeLabel.textColor = ThemeCatalog.current.positive.color()
         } else {
             changeLabel.stringValue = String(format: "%.2f%%", change)
-            changeLabel.textColor = NSColor(calibratedRed: 1, green: 0.4, blue: 0.4, alpha: 1)
+            changeLabel.textColor = ThemeCatalog.current.negative.color()
         }
 
         lastPrice = price
@@ -1496,14 +1678,14 @@ class CryptoRowView: NSView {
 
         if isHovered {
             let bg = NSBezierPath(roundedRect: bounds.insetBy(dx: 4, dy: 3), xRadius: 8, yRadius: 8)
-            NSColor(calibratedWhite: 1, alpha: 0.06).setFill()
+            ThemeCatalog.current.foreground.color(alpha: 0.06).setFill()
             bg.fill()
         }
 
         let separator = NSBezierPath()
         separator.move(to: NSPoint(x: 12, y: 0.5))
         separator.line(to: NSPoint(x: bounds.width - 12, y: 0.5))
-        NSColor(calibratedWhite: 1, alpha: 0.07).setStroke()
+        ThemeCatalog.current.foreground.color(alpha: 0.07).setStroke()
         separator.lineWidth = 0.5
         separator.stroke()
     }
@@ -1560,6 +1742,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var removeMenu: NSMenu!
     var menuBarMenu: NSMenu!
     var floatingWidgetMenu: NSMenu!
+    var themeMenu: NSMenu!
     var expandCollapseItem: NSMenuItem!
     var sparklineToggleItem: NSMenuItem!
     var updatedLabel: NSTextField?
@@ -1622,6 +1805,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
 
         config = AppConfig.load()
+        ThemeCatalog.current = ThemeCatalog.theme(for: config.theme)
         sanitizeMenuBarSymbol()
 
         setupStatusBar()
@@ -1667,6 +1851,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let floatingWidgetItem = NSMenuItem(title: "Floating Widget", action: nil, keyEquivalent: "")
         floatingWidgetItem.submenu = floatingWidgetMenu
         menu.addItem(floatingWidgetItem)
+
+        // Theme submenu
+        themeMenu = NSMenu()
+        updateThemeMenu()
+        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+        themeItem.submenu = themeMenu
+        menu.addItem(themeItem)
 
         // Transparency submenu
         transparencyMenu = NSMenu()
@@ -1791,6 +1982,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func updateThemeMenu() {
+        themeMenu.removeAllItems()
+
+        for theme in ThemeCatalog.all {
+            let item = NSMenuItem(title: theme.displayName, action: #selector(setTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = theme.id.rawValue
+            item.state = config.theme == theme.id ? .on : .off
+            themeMenu.addItem(item)
+        }
+    }
+
     func updateWindowShadow() {
         floatingWindow?.hasShadow = shouldUseWindowShadow
     }
@@ -1903,7 +2106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let titleLabel = NSTextField(labelWithString: "PRICES · USDT")
         titleLabel.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
-        titleLabel.textColor = NSColor(calibratedRed: 0.72, green: 0.82, blue: 1, alpha: 0.8)
+        titleLabel.textColor = ThemeCatalog.current.accent.color(alpha: 0.8)
         titleLabel.isBezeled = false
         titleLabel.drawsBackground = false
         titleLabel.isEditable = false
@@ -1913,7 +2116,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let updated = NSTextField(labelWithString: "")
         updated.font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
         updated.alignment = .right
-        updated.textColor = NSColor(calibratedRed: 0.7, green: 0.8, blue: 1, alpha: 0.5)
+        updated.textColor = ThemeCatalog.current.accent.color(alpha: 0.5)
         updated.isBezeled = false
         updated.drawsBackground = false
         updated.isEditable = false
@@ -2201,10 +2404,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let erroredCount = symbols.filter { (latestPrices[$0]?.hasError ?? true) }.count
         if erroredCount == symbols.count {
             label.stringValue = "reconnecting…"
-            label.textColor = NSColor(calibratedRed: 1, green: 0.5, blue: 0.5, alpha: 0.7)
+            label.textColor = ThemeCatalog.current.negative.color(alpha: 0.7)
         } else {
             label.stringValue = "updated \(timeFormatter.string(from: Date()))"
-            label.textColor = NSColor(calibratedRed: 0.7, green: 0.8, blue: 1, alpha: 0.55)
+            label.textColor = ThemeCatalog.current.accent.color(alpha: 0.55)
         }
     }
 
@@ -2246,6 +2449,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupContentPanel()
 
         refreshPrices()
+    }
+
+    @objc func setTheme(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let themeName = AppThemeName(rawValue: rawValue),
+              themeName != config.theme else {
+            return
+        }
+
+        config.theme = themeName
+        ThemeCatalog.current = ThemeCatalog.theme(for: themeName)
+        config.save()
+        updateThemeMenu()
+
+        if config.isExpanded {
+            rebuildWindow()
+        } else {
+            setupFloatingWidget()
+            refreshPrices()
+        }
+
+        chartContentView?.needsDisplay = true
+        updateStatusLabel()
     }
 
     @objc func setTransparency(_ sender: NSMenuItem) {
@@ -2346,12 +2572,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         config.cryptos = AppConfig.default.cryptos
         config.refreshRate = AppConfig.default.refreshRate
         config.floatingWidgetMode = AppConfig.default.floatingWidgetMode
+        config.theme = AppConfig.default.theme
+        ThemeCatalog.current = ThemeCatalog.theme(for: config.theme)
         sanitizeMenuBarSymbol()
         config.save()
         updateWindowShadow()
         updateRemoveMenu()
         updateMenuBarMenu()
         updateFloatingWidgetMenu()
+        updateThemeMenu()
         updateMenuBarTitle()
         rebuildWindow()
         if !config.isExpanded {

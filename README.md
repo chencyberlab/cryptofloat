@@ -15,6 +15,7 @@ A native macOS menu bar app for tracking cryptocurrency prices in a floating, dr
 - **24h sparklines** - optional mini trend line on each row.
 - **Menu-bar ticker** - optionally show one tracked coin's price in the macOS menu bar.
 - **Background-only transparency** - the widget background fades from 50% to 100%, while text and charts stay readable.
+- **Selectable color themes** - keep the default CryptoFloat look or switch to Tokyo Night, Dracula, Nord, Catppuccin Mocha, One Dark Pro, Everforest Dark, Gruvbox Dark, or Cyberpunk Neon.
 - **Color-coded movement** - green/red 24h changes, price-change flashes, arrows, and accent tinting.
 - **Resilient updates** - keeps the last known price during network hiccups and shows updated/reconnecting status.
 - **Generated app icon** - build script creates and bundles a modern line-chart app icon.
@@ -85,6 +86,7 @@ cp -r CryptoFloat.app /Applications/
 | Show/Hide Window | Toggle floating window visibility |
 | Expand/Collapse Prices | Same as clicking the floating widget |
 | Floating Widget | Choose Simple Bitcoin or Marquee Prices |
+| Theme | Choose the active color scheme |
 | Transparency | Adjust background opacity from 50% to 100% |
 | Refresh Rate | Choose update interval from 5 seconds to 5 minutes |
 | Show Sparklines | Toggle row mini charts |
@@ -149,6 +151,7 @@ Example:
   "menuBarSymbol": null,
   "refreshRate": 30,
   "showSparklines": true,
+  "theme": "cryptoFloat",
   "transparency": 0.85,
   "windowX": 100,
   "windowY": 100
@@ -159,6 +162,18 @@ Example:
 
 - `"bitcoin"` - compact Bitcoin button
 - `"marquee"` - scrolling price ticker
+
+`theme` can be:
+
+- `"cryptoFloat"` - the default theme
+- `"tokyoNight"`
+- `"dracula"`
+- `"nord"`
+- `"catppuccinMocha"`
+- `"oneDarkPro"`
+- `"everforestDark"`
+- `"gruvboxDark"`
+- `"cyberpunkNeon"`
 
 The config loader is tolerant: missing or malformed keys fall back to defaults, so older config files still work.
 
