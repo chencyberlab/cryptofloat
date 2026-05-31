@@ -2,8 +2,7 @@
 
 A native macOS menu bar app for tracking cryptocurrency prices in a floating, draggable widget.
 
-<img width="662" height="1096" alt="CleanShot 2026-05-31 at 14 52 36@2x" src="https://github.com/user-attachments/assets/547d3890-8d81-414c-b437-932ff41afd49" />
-
+<img width="1318" height="662" alt="CryptoFloat screenshot" src="https://github.com/user-attachments/assets/a56095d0-de24-4570-a9b8-db548b1bb353" />
 
 ## Features
 

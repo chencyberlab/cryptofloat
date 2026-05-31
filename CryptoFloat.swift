@@ -2097,9 +2097,14 @@ class NetworkFeesView: NSView {
         }
     }
 
+    private func feeUSDText(_ value: Double) -> String {
+        let roundedUp = ceil(max(value, 0) * 1000) / 1000
+        return String(format: "$%.3f", roundedUp)
+    }
+
     private func tierSignature(_ tier: NetworkFeeTier) -> String {
         let parts = rateParts(tier)
-        let usd = tier.usdValue.map { PriceFormatter.shared.compact($0) } ?? "--"
+        let usd = tier.usdValue.map { feeUSDText($0) } ?? "--"
         return "\(parts.amount)|\(parts.unit)|\(usd)|\(tier.eta)"
     }
 
@@ -2179,16 +2184,12 @@ class NetworkFeesView: NSView {
         path.lineWidth = 1
         path.stroke()
 
-        let dot = NSBezierPath(ovalIn: NSRect(x: rect.minX + 9, y: rect.maxY - 18, width: 6, height: 6))
-        accent.setFill()
-        dot.fill()
-
         tierTitle(for: index).draw(
-            in: NSRect(x: rect.minX + 19, y: rect.maxY - 21, width: rect.width - 26, height: 12),
+            in: NSRect(x: rect.minX + 8, y: rect.maxY - 21, width: rect.width - 16, height: 12),
             withAttributes: attributes(
                 font: NSFont.systemFont(ofSize: 8.5, weight: .bold),
                 color: accent,
-                alignment: .left
+                alignment: .center
             )
         )
 
@@ -2212,7 +2213,7 @@ class NetworkFeesView: NSView {
             )
         )
 
-        let usdText = tier.usdValue.map { PriceFormatter.shared.compact($0) } ?? "--"
+        let usdText = tier.usdValue.map { feeUSDText($0) } ?? "--"
         usdText.draw(
             in: NSRect(x: rect.minX + 6, y: rect.minY + 18, width: rect.width - 12, height: 11),
             withAttributes: attributes(
