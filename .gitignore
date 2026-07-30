@@ -1,0 +1,5 @@
+.DS_Store
+.build/
+.cryptofloat-build.*
+CryptoFloat.app/
+CryptoFloat.zip

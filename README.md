@@ -10,7 +10,7 @@ A native macOS menu bar app for tracking cryptocurrency prices in a floating, dr
 - **Two floating widget modes** - choose between the compact Bitcoin button or a scrolling marquee ticker.
 - **Marquee price widget** - shows tracked symbols, live prices, and 24h percentage changes while the main panel is collapsed.
 - **Dropdown price panel** - expands from the floating widget and stays always on top.
-- **7-day chart popup** - click any crypto row to open a small chart popup; click anywhere to hide it.
+- **7-day chart popup** - click any crypto row to open a small chart popup; press Escape, use its close button, or click outside to dismiss it.
 - **Interactive chart hover** - move over the 7-day chart to see historical candle prices and times.
 - **Optional network fees** - show ETH slow/standard/fast gas and BTC slow/standard/fast fee estimates below the price panel.
 - **24h sparklines** - optional mini trend line on each row.
@@ -20,7 +20,9 @@ A native macOS menu bar app for tracking cryptocurrency prices in a floating, dr
 - **Selectable data sources** - switch between KuCoin, Binance, and CoinGecko from the menu bar.
 - **Color-coded movement** - green/red 24h changes, price-change flashes, arrows, and accent tinting.
 - **Resilient updates** - keeps the last known price during network hiccups and shows updated/reconnecting status.
-- **Generated app icon** - build script creates and bundles a modern line-chart app icon.
+- **Accessible native controls** - keyboard activation, VoiceOver summaries, Reduce Motion, and Reduce Transparency are supported.
+- **Responsive watchlist** - large asset lists scroll inside the visible screen instead of pushing the widget off-screen.
+- **Bundled app icon** - the checked-in line-chart icon is validated and bundled during each build.
 - **Persistent settings** - remembers tracked coins, widget mode, position, refresh rate, transparency, and display preferences.
 
 ## Data Source
@@ -49,6 +51,8 @@ Network fee estimates use public endpoints:
 - macOS 11.0 Big Sur or later
 - Xcode Command Line Tools
 
+The SwiftPM test harness uses a Swift 5.9 manifest, so Swift 5.9 / Xcode 15 or newer is recommended when running tests.
+
 Install command line tools if needed:
 
 ```bash
@@ -57,11 +61,17 @@ xcode-select --install
 
 ## Quick Start
 
-Put `CryptoFloat.swift`, `generate_icon.swift`, and `build.sh` in the same folder, then build:
+Clone or download the repository, then build from its root:
 
 ```bash
 chmod +x build.sh
 ./build.sh
+```
+
+The default build targets the current Mac architecture and macOS 11 or later. To create a universal binary:
+
+```bash
+BUILD_ARCH=universal ./build.sh
 ```
 
 Run the app:
@@ -91,6 +101,7 @@ cp -r CryptoFloat.app /Applications/
 - Hover rows for a subtle highlight.
 - Click a row to open a 7-day chart popup.
 - Move over the chart line to inspect historical price points.
+- With Full Keyboard Access enabled, use Tab to focus controls, Space or Return to activate them, and the Left/Right arrows to inspect chart points.
 - Click anywhere outside the chart popup to dismiss it.
 - If sparklines are enabled, each row shows a small 24h trend chart.
 
@@ -141,10 +152,32 @@ Any symbol listed against USDT on the selected exchange source should work. Coin
 The build script creates:
 
 - `CryptoFloat.app`
-- `AppIcon.icns`
-- `AppIcon.iconset/`
 
-`generate_icon.swift` draws the app icon and `iconutil` packages it into the macOS `.icns` format. The generated icon is copied into `CryptoFloat.app/Contents/Resources/` and referenced by `Info.plist`.
+The build is assembled in a temporary staging directory, validated, ad-hoc signed for local use, and only then replaces an older app bundle. The checked-in `AppIcon.icns` is copied into `CryptoFloat.app/Contents/Resources/` and referenced by `Info.plist`. `generate_icon.swift` documents the icon source artwork; normal builds do not depend on `iconutil` or rewrite tracked assets.
+
+## Project Structure
+
+```text
+Sources/
+  CryptoFloatCore/   Configuration, models, formatting, parsing, and pure helpers
+  CryptoFloatApp/    Networking, AppKit views, windows, and application coordination
+Tests/
+  CryptoFloatCoreTests/
+Package.swift        Testable core-target definition
+build.sh             Native and universal application packaging
+```
+
+The production build compiles both source directories into one native app executable. The Swift package isolates the non-AppKit core so parsing, normalization, retry, formatting, theme contrast, and layout behavior can be tested without launching the UI.
+
+## Tests
+
+Run the complete core test suite with:
+
+```bash
+swift test -Xswiftc -warnings-as-errors
+```
+
+CI also performs a warning-free macOS 11 type-check, builds and validates the app bundle, and verifies its code signature.
 
 ## Configuration
 
@@ -200,7 +233,7 @@ Example:
 - `"gruvboxDark"`
 - `"cyberpunkNeon"`
 
-The config loader is tolerant: missing or malformed keys fall back to defaults, so older config files still work.
+The config loader is tolerant: missing or malformed keys fall back to defaults, invalid ranges are normalized, duplicate symbols are removed, and older config files continue to work. Up to 20 ASCII asset symbols can be tracked at once.
 
 ## Troubleshooting
 
@@ -233,4 +266,4 @@ macOS may cache app icons. Try quitting the app, rebuilding, and opening the fre
 
 ## License
 
-MIT License - feel free to modify and distribute.
+[MIT License](LICENSE) - feel free to modify and distribute.
