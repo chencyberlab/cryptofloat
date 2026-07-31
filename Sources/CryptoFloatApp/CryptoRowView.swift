@@ -1,7 +1,7 @@
 import Cocoa
 
 // MARK: - Crypto Row View
-class CryptoRowView: NSButton {
+class CryptoRowView: NSView {
     let symbol: String
     let showSparkline: Bool
     var onClick: ((CryptoRowView) -> Void)?
@@ -49,12 +49,6 @@ class CryptoRowView: NSButton {
     private func setup() {
         wantsLayer = true
         let w = bounds.width
-
-        title = ""
-        isBordered = false
-        setButtonType(.momentaryChange)
-        target = self
-        action = #selector(handleButtonPress)
 
         toolTip = "Show \(symbol) seven-day chart"
         setAccessibilityElement(true)
@@ -122,16 +116,15 @@ class CryptoRowView: NSButton {
         )
         addTrackingArea(tracking)
 
+        let click = NSClickGestureRecognizer(target: self, action: #selector(handleClick(_:)))
+        click.numberOfClicksRequired = 1
+        addGestureRecognizer(click)
     }
 
     override var acceptsFirstResponder: Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func accessibilityChildren() -> [Any]? { [] }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        return bounds.contains(point) && !isHidden && alphaValue > 0 ? self : nil
-    }
 
     override func becomeFirstResponder() -> Bool {
         let accepted = super.becomeFirstResponder()
@@ -195,16 +188,10 @@ class CryptoRowView: NSButton {
                 arrowLabel.stringValue = "▲"
                 arrowLabel.textColor = ThemeCatalog.current.positive.color()
                 priceLabel.animateValueChange(goingUp: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                    self?.fadeOutArrow()
-                }
             } else if priceWentDown {
                 arrowLabel.stringValue = "▼"
                 arrowLabel.textColor = ThemeCatalog.current.negative.color()
                 priceLabel.animateValueChange(goingUp: false)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                    self?.fadeOutArrow()
-                }
             }
         }
 
@@ -231,21 +218,6 @@ class CryptoRowView: NSButton {
         }
     }
 
-    private func fadeOutArrow() {
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-            arrowLabel.stringValue = ""
-            arrowLabel.alphaValue = 1
-            return
-        }
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.5
-            arrowLabel.animator().alphaValue = 0
-        }, completionHandler: { [weak self] in
-            self?.arrowLabel.stringValue = ""
-            self?.arrowLabel.alphaValue = 1
-        })
-    }
-
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 || event.keyCode == 49 {
             onClick?(self)
@@ -259,7 +231,8 @@ class CryptoRowView: NSButton {
         return true
     }
 
-    @objc private func handleButtonPress() {
+    @objc private func handleClick(_ recognizer: NSClickGestureRecognizer) {
+        guard recognizer.state == .ended else { return }
         window?.makeFirstResponder(self)
         onClick?(self)
     }

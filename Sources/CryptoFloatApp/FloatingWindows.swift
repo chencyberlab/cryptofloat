@@ -28,7 +28,7 @@ class ChartPopupWindow: NSWindow {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = true
-        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle]
+        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
     }
 
     override var canBecomeKey: Bool { true }

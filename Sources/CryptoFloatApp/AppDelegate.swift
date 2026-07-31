@@ -693,10 +693,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chartWindow = popup
         chartContentView = content
 
+        let openingEventTimestamp = NSApp.currentEvent?.timestamp ?? ProcessInfo.processInfo.systemUptime
+
         popup.displayIfNeeded()
         popup.makeKeyAndOrderFront(nil)
         popup.makeFirstResponder(content)
-        installChartDismissalMonitors()
+        installChartDismissalMonitors(ignoringEventsThrough: openingEventTimestamp)
 
         if let cached = chartCache[symbol], Date().timeIntervalSince(cached.fetchedAt) < 600 {
             content.setPoints(cached.points)
@@ -730,7 +732,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         activeChartSymbol = nil
     }
 
-    private func installChartDismissalMonitors() {
+    private func installChartDismissalMonitors(ignoringEventsThrough openingEventTimestamp: TimeInterval) {
         removeChartDismissalMonitors()
 
         DispatchQueue.main.async { [weak self] in
@@ -739,6 +741,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var monitors: [Any] = []
             if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
                 guard let self = self else { return event }
+                guard event.timestamp > openingEventTimestamp else { return event }
                 if event.window !== self.chartWindow {
                     self.hideChartPopup()
                 }
@@ -747,7 +750,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 monitors.append(local)
             }
 
-            if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+            if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+                guard event.timestamp > openingEventTimestamp else { return }
                 DispatchQueue.main.async {
                     self?.hideChartPopup()
                 }
